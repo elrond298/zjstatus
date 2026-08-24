@@ -79,6 +79,7 @@ struct State {
     hint_page: usize,
     hint_page_count: usize,
     hint_formats: Option<HintFormats>,
+    hint_idle_parts: Vec<FormattedPart>,
     err: Option<anyhow::Error>,
 }
 
@@ -139,6 +140,13 @@ impl ZellijPlugin for State {
             }
         };
         self.hint_formats = Some(HintFormats::new(&configuration));
+        self.hint_idle_parts = FormattedPart::multiple_from_format_string(
+            configuration
+                .get("hint_idle_format")
+                .map(String::as_str)
+                .unwrap_or_default(),
+            &configuration,
+        );
         self.widget_map = register_widgets(&configuration);
         self.focus_cwd_commands =
             zjstatus::widgets::command::focus_cwd_command_names(&configuration);
@@ -335,16 +343,33 @@ impl State {
         true
     }
 
+    fn idle_line(&mut self, cols: usize) -> String {
+        let output = self
+            .hint_idle_parts
+            .iter_mut()
+            .fold(String::new(), |output, part| {
+                output + &part.format_string_with_widgets(&self.widget_map, &self.state)
+            });
+        let used = console::measure_text_width(&output);
+        let Some(formats) = &self.hint_formats else {
+            return output;
+        };
+        output
+            + &formats
+                .space
+                .format_string(&" ".repeat(cols.saturating_sub(used)))
+    }
+
     fn hint_line(&mut self, cols: usize) -> String {
         let pages = hint_pages(&self.state.mode.mode, &self.keybinds, cols);
         self.hint_page_count = pages.len().max(1);
         self.hint_page %= self.hint_page_count;
+        if !self.hint_visible || !shows_hints(&self.state.mode.mode) {
+            return self.idle_line(cols);
+        }
         let Some(formats) = &self.hint_formats else {
             return String::new();
         };
-        if !self.hint_visible || !shows_hints(&self.state.mode.mode) {
-            return formats.space.format_string(&" ".repeat(cols));
-        }
 
         let mode = format!("{:?}", self.state.mode.mode).to_uppercase();
         let header = fit(

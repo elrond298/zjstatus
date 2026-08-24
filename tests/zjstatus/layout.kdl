@@ -8,6 +8,7 @@ layout {
             color_blue   "#89B4FA"
             color_yellow "yellow"
             color_bg     "#181825"
+            color_panel  "#181825"
 
             format_left               "{mode}#[fg=$blue,bg=$bg,bold] {session}"
             format_center             "{tabs} {command_3} {pipe_1}"
@@ -17,6 +18,7 @@ layout {
             hint_key_format           "#[fg=$yellow,bg=$bg,bold]"
             hint_desc_format          "#[fg=#CDD6F4,bg=$bg]"
             hint_space_format         "#[bg=$bg]"
+            hint_idle_format          "{command_vcs}"
             format_precedence         "lrc"
             format_hide_on_overlength "false"
 
@@ -69,6 +71,13 @@ layout {
             command_1_command   "date"
             command_1_format    "#[fg=blue,reverse,bg=default,us=red,blink,dim,strikethrough] {exit_code} {stdout} "
             command_1_interval  "1"
+
+            command_vcs_command            "/mnt/wsl/PHYSICALDRIVE0p1/opt/zjstatus/examples/pi-status.sh"
+            command_vcs_cwd                "{focused_pane_cwd}"
+            command_vcs_format             "{stdout}"
+            command_vcs_rendermode         "dynamic"
+            command_vcs_interval           "2"
+            command_vcs_hideonemptystdout  "true"
 
             command_git_branch_command   "bash -c \"echo $FOO\""
             command_git_branch_cwd       "/Users/daniel"
