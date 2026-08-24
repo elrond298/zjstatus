@@ -57,6 +57,10 @@ export default function (pi: ExtensionAPI) {
   };
 
   const applyTodo = (name: string, args: any) => {
+    if (name === "todo" && args?.action === "clear") {
+      todos.clear();
+      return;
+    }
     if (name === "todowrite" && Array.isArray(args?.todos)) {
       todos.clear();
       for (const item of args.todos) {
