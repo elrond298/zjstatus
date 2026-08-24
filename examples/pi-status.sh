@@ -44,11 +44,11 @@ pi=$(jq -sr '
     def todo:
         if . == null then ""
         elif type == "object" then
-            paint("#C6A0F6"; " ☷ " + ((.completed // 0) | tostring) + "/" + ((.total // 0) | tostring)) +
+            paint("#C6A0F6"; " " + ((.completed // 0) | tostring) + "/" + ((.total // 0) | tostring)) +
             (if (.active // 0) > 0 and .detail then
                 optional_todo(paint("#EED49F"; " ▶ " + (.detail | clean)))
             else "" end)
-        else paint("#EED49F"; " ☷ " + (. | clean))
+        else paint("#EED49F"; " " + (. | clean))
         end;
     sort_by(.busy | not) |
     map(
