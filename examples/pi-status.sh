@@ -42,7 +42,7 @@ pi=$(jq -sr '
     def paint($color; $text): "#[bg=$panel,fg=" + $color + "]" + $text;
     sort_by(.busy | not) |
     map(
-        paint("#C6A0F6"; "π" + (if .sessionName then " [" + (.sessionName | short) + "]" else "" end)) +
+        paint("#C6A0F6"; "π" + (if (.sessionName // .instanceName) then " [" + ((.sessionName // .instanceName) | short) + "]" else "" end)) +
         (if .busy then paint("#EED49F"; " ●") else paint("#A6DA95"; " ○") end) +
         (if .todo then paint("#EED49F"; " 󰄬 " + (.todo | short)) else "" end) +
         (if (.subagents | length) > 0 then paint("#8AADF4"; " 󰓻 " + (.subagents | length | tostring)) else "" end) +
