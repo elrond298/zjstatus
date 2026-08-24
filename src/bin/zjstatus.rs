@@ -364,11 +364,31 @@ impl State {
             .fold(String::new(), |output, part| {
                 output + &part.format_string_with_widgets(&self.widget_map, &self.state)
             });
+        let full_left = optional_details(&left, true);
+        let compact_left = optional_details(&left, false);
+        left = full_left;
         let Some(formats) = &self.hint_formats else {
             return left + &right;
         };
         let mut left_width = console::measure_text_width(&left);
-        let right_width = console::measure_text_width(&right);
+        let mut right_width = console::measure_text_width(&right);
+        if left_width + right_width > cols {
+            for _ in 0..2 {
+                let reduced = drop_last_right_block(right.clone());
+                if reduced == right {
+                    break;
+                }
+                right = reduced;
+                right_width = console::measure_text_width(&right);
+                if left_width + right_width <= cols {
+                    break;
+                }
+            }
+        }
+        if left_width + right_width > cols {
+            left = compact_left;
+            left_width = console::measure_text_width(&left);
+        }
         if left_width + right_width > cols {
             let right_reserve = right_width.min(cols / 3);
             left = console::truncate_str(&left, cols - right_reserve, "…").into_owned();
@@ -707,6 +727,35 @@ fn humanize(name: &str) -> String {
     output
 }
 
+const OPTIONAL_DETAIL_START: char = '\u{e000}';
+const OPTIONAL_DETAIL_END: char = '\u{e001}';
+
+fn optional_details(text: &str, keep: bool) -> String {
+    let mut inside = false;
+    text.chars()
+        .filter(|character| match *character {
+            OPTIONAL_DETAIL_START => {
+                inside = true;
+                false
+            }
+            OPTIONAL_DETAIL_END => {
+                inside = false;
+                false
+            }
+            _ => keep || !inside,
+        })
+        .collect()
+}
+
+fn drop_last_right_block(mut text: String) -> String {
+    let ends: Vec<_> = text.match_indices(' ').map(|(index, _)| index).collect();
+    if ends.len() < 2 {
+        return String::new();
+    }
+    text.truncate(ends[ends.len() - 2] + ' '.len_utf8());
+    text
+}
+
 fn fit_right_blocks(mut text: String, max_width: usize) -> String {
     while console::measure_text_width(&text) > max_width {
         let ends: Vec<_> = text.match_indices(' ').map(|(index, _)| index).collect();
@@ -835,12 +884,29 @@ mod test {
     }
 
     #[test]
+    fn idle_row_optional_details_have_full_and_compact_forms() {
+        let text = format!(
+            "π 2/3 {OPTIONAL_DETAIL_START}working on a long task{OPTIONAL_DETAIL_END} tool",
+        );
+        assert_eq!(
+            optional_details(&text, true),
+            "π 2/3 working on a long task tool"
+        );
+        assert_eq!(optional_details(&text, false), "π 2/3  tool");
+    }
+
+    #[test]
     fn narrow_idle_rows_truncate_left_and_keep_right_blocks() {
         assert_eq!(
             console::truncate_str("branch commit message", 12, "…"),
             "branch comm…"
         );
         let metrics = "D N L H ".to_owned();
+        assert_eq!(drop_last_right_block(metrics.clone()), "D N L ");
+        assert_eq!(
+            drop_last_right_block(drop_last_right_block(metrics.clone())),
+            "D N "
+        );
         assert_eq!(fit_right_blocks(metrics.clone(), 6), "D N L ");
         assert_eq!(fit_right_blocks(metrics.clone(), 4), "D N ");
         assert_eq!(fit_right_blocks(metrics, 2), "N ");
