@@ -25,16 +25,15 @@ diff_counts() {
 
 if jj root >/dev/null 2>&1; then
     bookmark=$(jj log --no-graph -r @ -T 'bookmarks' 2>/dev/null)
-    change=$(jj log --no-graph -r @ -T 'change_id.short(8)' 2>/dev/null)
     description=$(jj log --no-graph -r @ -T 'description.first_line()' 2>/dev/null)
     [ -z "$bookmark" ] || paint '#A6DA95' " $(clean "$bookmark")"
     [ -z "$bookmark" ] || paint '#CAD3F5' ' '
-    paint '#8AADF4' "@ $(clean "$change")"
     if [ -n "$description" ]; then
-        paint '#8AADF4' " $(clean "$description")"
+        paint '#8AADF4' "@ $(clean "$description")"
     else
+        paint '#8AADF4' '@()'
         parent=$(jj log --no-graph -r @- -T 'description.first_line()' 2>/dev/null)
-        [ -z "$parent" ] || paint '#CAD3F5' "  @- $(clean "$parent")"
+        paint '#CAD3F5' "  @-($(clean "$parent"))"
     fi
     if [ -n "$(jj diff --summary 2>/dev/null)" ]; then
         counts=$(jj diff --git --color never 2>/dev/null | awk '
