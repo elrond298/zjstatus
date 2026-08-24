@@ -364,14 +364,19 @@ impl State {
             .fold(String::new(), |output, part| {
                 output + &part.format_string_with_widgets(&self.widget_map, &self.state)
             });
-        let full_left = optional_details(&left, true);
-        let compact_left = optional_details(&left, false);
+        let full_left = pi_left_variant(&left, true, true);
+        let without_tool = pi_left_variant(&left, true, false);
+        let compact_left = pi_left_variant(&left, false, false);
         left = full_left;
         let Some(formats) = &self.hint_formats else {
             return left + &right;
         };
         let mut left_width = console::measure_text_width(&left);
         let mut right_width = console::measure_text_width(&right);
+        if left_width + right_width > cols {
+            left = without_tool;
+            left_width = console::measure_text_width(&left);
+        }
         if left_width + right_width > cols {
             for _ in 0..2 {
                 let reduced = drop_last_right_block(right.clone());
@@ -727,24 +732,31 @@ fn humanize(name: &str) -> String {
     output
 }
 
-const OPTIONAL_DETAIL_START: char = '\u{e000}';
-const OPTIONAL_DETAIL_END: char = '\u{e001}';
+const OPTIONAL_TODO_START: char = '\u{e000}';
+const OPTIONAL_TODO_END: char = '\u{e001}';
+const OPTIONAL_TOOL_START: char = '\u{e002}';
+const OPTIONAL_TOOL_END: char = '\u{e003}';
 
-fn optional_details(text: &str, keep: bool) -> String {
+fn optional_section(text: &str, start: char, end: char, keep: bool) -> String {
     let mut inside = false;
     text.chars()
         .filter(|character| match *character {
-            OPTIONAL_DETAIL_START => {
+            character if character == start => {
                 inside = true;
                 false
             }
-            OPTIONAL_DETAIL_END => {
+            character if character == end => {
                 inside = false;
                 false
             }
             _ => keep || !inside,
         })
         .collect()
+}
+
+fn pi_left_variant(text: &str, keep_todo: bool, keep_tool: bool) -> String {
+    let text = optional_section(text, OPTIONAL_TOOL_START, OPTIONAL_TOOL_END, keep_tool);
+    optional_section(&text, OPTIONAL_TODO_START, OPTIONAL_TODO_END, keep_todo)
 }
 
 fn drop_last_right_block(mut text: String) -> String {
@@ -886,13 +898,17 @@ mod test {
     #[test]
     fn idle_row_optional_details_have_full_and_compact_forms() {
         let text = format!(
-            "π 2/3 {OPTIONAL_DETAIL_START}working on a long task{OPTIONAL_DETAIL_END} tool",
+            "π 2/3{OPTIONAL_TODO_START} working on a long task{OPTIONAL_TODO_END}{OPTIONAL_TOOL_START} bash{OPTIONAL_TOOL_END}",
         );
         assert_eq!(
-            optional_details(&text, true),
-            "π 2/3 working on a long task tool"
+            pi_left_variant(&text, true, true),
+            "π 2/3 working on a long task bash"
         );
-        assert_eq!(optional_details(&text, false), "π 2/3  tool");
+        assert_eq!(
+            pi_left_variant(&text, true, false),
+            "π 2/3 working on a long task"
+        );
+        assert_eq!(pi_left_variant(&text, false, false), "π 2/3");
     }
 
     #[test]
