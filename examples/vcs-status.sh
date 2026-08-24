@@ -29,11 +29,16 @@ if jj root >/dev/null 2>&1; then
     [ -z "$bookmark" ] || paint '#A6DA95' " $(clean "$bookmark")"
     [ -z "$bookmark" ] || paint '#CAD3F5' ' '
     if [ -n "$description" ]; then
-        paint '#8AADF4' "@ $(clean "$description")"
+        paint '#8AADF4' '@ '
+        paint '#C6A0F6' "$(clean "$description")"
     else
-        paint '#8AADF4' '@()'
         parent=$(jj log --no-graph -r @- -T 'description.first_line()' 2>/dev/null)
-        paint '#CAD3F5' "  @-($(clean "$parent"))"
+        if [ -n "$parent" ]; then
+            paint '#8AADF4' '@- '
+            paint '#C6A0F6' "$(clean "$parent")"
+        else
+            paint '#8AADF4' '@()'
+        fi
     fi
     if [ -n "$(jj diff --summary 2>/dev/null)" ]; then
         counts=$(jj diff --git --color never 2>/dev/null | awk '
