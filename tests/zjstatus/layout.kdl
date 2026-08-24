@@ -3,7 +3,7 @@ layout {
         pane
     }
 
-    pane size=2 borderless=true {
+    pane size=3 borderless=true {
         plugin location="file:target/wasm32-wasip1/debug/zjstatus.wasm" {
             color_blue   "#89B4FA"
             color_yellow "yellow"
@@ -13,6 +13,10 @@ layout {
             format_center             "{tabs} {command_3} {pipe_1}"
             format_right              "{notifications}{datetime}"
             format_space              "#[bg=$bg]"
+            hint_mode_format          "#[fg=$blue,bg=$bg,bold]"
+            hint_key_format           "#[fg=$yellow,bg=$bg,bold]"
+            hint_desc_format          "#[fg=#CDD6F4,bg=$bg]"
+            hint_space_format         "#[bg=$bg]"
             format_precedence         "lrc"
             format_hide_on_overlength "false"
 

@@ -5,7 +5,7 @@ use regex::Regex;
 use zellij_tile::prelude::*;
 
 use crate::{
-    border::{parse_border_config, BorderConfig, BorderPosition},
+    border::{BorderConfig, BorderPosition, parse_border_config},
     render::FormattedPart,
     widgets::{command::CommandResult, notification, widget::Widget},
 };
@@ -178,8 +178,10 @@ impl ModuleConfig {
         widget_map: BTreeMap<String, Arc<dyn Widget>>,
     ) {
         let click_pos = match mouse {
-            Mouse::ScrollUp(_) => return,
-            Mouse::ScrollDown(_) => return,
+            Mouse::ScrollUp(_)
+            | Mouse::ScrollDown(_)
+            | Mouse::ScrollLeft(_)
+            | Mouse::ScrollRight(_) => return,
             Mouse::LeftClick(_, y) => y,
             Mouse::RightClick(_, y) => y,
             Mouse::Hold(_, y) => y,

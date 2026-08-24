@@ -1,12 +1,20 @@
+use zellij_tile::prelude::actions::Action;
 use zellij_tile::prelude::*;
 
 use chrono::Local;
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use uuid::Uuid;
 
 use zjstatus::{
+    border::BorderPosition,
     config::{self, ModuleConfig, UpdateEventMask, ZellijState},
     frames, pipe,
+    render::FormattedPart,
     widgets::{
         command::{CommandResult, CommandWidget},
         datetime::DateTimeWidget,
@@ -22,16 +30,55 @@ use zjstatus::{
 
 // Matches the old incidental Zellij session scan cadence.
 const REFRESH_INTERVAL_SECONDS: f64 = 1.0;
+const HINT_DELAY: Duration = Duration::from_millis(500);
+const HINT_DISMISS_DELAY: Duration = Duration::from_millis(20);
+
+#[derive(Clone)]
+struct HintFormats {
+    mode: FormattedPart,
+    key: FormattedPart,
+    desc: FormattedPart,
+    space: FormattedPart,
+}
+
+impl HintFormats {
+    fn new(configuration: &BTreeMap<String, String>) -> Self {
+        let format = |name: &str, default: &str| {
+            FormattedPart::from_format_string(
+                configuration
+                    .get(name)
+                    .map(String::as_str)
+                    .unwrap_or(default),
+                configuration,
+            )
+        };
+        Self {
+            mode: format("hint_mode_format", "#[fg=blue,bg=default,bold]"),
+            key: format("hint_key_format", "#[fg=yellow,bg=default,bold]"),
+            desc: format("hint_desc_format", "#[fg=white,bg=default]"),
+            space: format("hint_space_format", "#[bg=default]"),
+        }
+    }
+}
 
 #[derive(Default)]
 struct State {
     pending_events: Vec<Event>,
     got_permissions: bool,
     state: ZellijState,
+    keybinds: KeybindsVec,
     userspace_configuration: BTreeMap<String, String>,
     module_config: config::ModuleConfig,
     widget_map: BTreeMap<String, Arc<dyn Widget>>,
     focus_cwd_commands: Vec<String>,
+    hint_visible: bool,
+    hint_dismissed: bool,
+    hint_reveal_at: Option<Instant>,
+    hint_dismiss_at: Option<Instant>,
+    hint_ignore_input_until: Option<Instant>,
+    hint_page: usize,
+    hint_page_count: usize,
+    hint_formats: Option<HintFormats>,
     err: Option<anyhow::Error>,
 }
 
@@ -71,6 +118,8 @@ impl ZellijPlugin for State {
 
         subscribe(&[
             EventType::Mouse,
+            EventType::InputReceived,
+            EventType::InitialKeybinds,
             EventType::ModeUpdate,
             EventType::PaneUpdate,
             EventType::PermissionRequestResult,
@@ -89,12 +138,21 @@ impl ZellijPlugin for State {
                 return;
             }
         };
+        self.hint_formats = Some(HintFormats::new(&configuration));
         self.widget_map = register_widgets(&configuration);
         self.focus_cwd_commands =
             zjstatus::widgets::command::focus_cwd_command_names(&configuration);
         self.userspace_configuration = configuration;
         self.pending_events = Vec::new();
+        self.keybinds = Vec::new();
         self.got_permissions = false;
+        self.hint_visible = false;
+        self.hint_dismissed = false;
+        self.hint_reveal_at = None;
+        self.hint_dismiss_at = None;
+        self.hint_ignore_input_until = None;
+        self.hint_page = 0;
+        self.hint_page_count = 1;
         let uid = Uuid::new_v4();
 
         self.state = ZellijState {
@@ -115,6 +173,9 @@ impl ZellijPlugin for State {
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
+        if pipe_message.name == "key-hints-next-page" {
+            return self.next_hint_page();
+        }
         let mut should_render = false;
 
         match pipe_message.source {
@@ -177,15 +238,140 @@ impl ZellijPlugin for State {
 
         tracing::debug!("{:?}", self.state.mode.session_name);
 
+        let hint = self.hint_line(cols);
         let output = self
             .module_config
             .render_bar(self.state.clone(), self.widget_map.clone());
 
-        print!("{}", output);
+        if self.module_config.border.enabled
+            && matches!(self.module_config.border.position, BorderPosition::Top)
+            && let Some((border, status)) = output.split_once('\n')
+        {
+            print!("{border}\n{hint}\n{status}");
+        } else {
+            print!("{hint}\n{output}");
+        }
     }
 }
 
 impl State {
+    fn mode_changed(&mut self) {
+        self.hint_visible = false;
+        self.hint_dismissed = false;
+        self.hint_dismiss_at = None;
+        self.hint_ignore_input_until = None;
+        self.hint_page = 0;
+        if shows_hints(&self.state.mode.mode) {
+            self.hint_reveal_at = Some(Instant::now() + HINT_DELAY);
+            set_timeout(HINT_DELAY.as_secs_f64());
+        } else {
+            self.hint_reveal_at = None;
+        }
+    }
+
+    fn input_received(&mut self) {
+        let now = Instant::now();
+        if self
+            .hint_ignore_input_until
+            .take()
+            .is_some_and(|ignore_until| now <= ignore_until)
+        {
+            return;
+        }
+        if self.hint_visible {
+            self.hint_dismiss_at = Some(now + HINT_DISMISS_DELAY);
+            set_timeout(HINT_DISMISS_DELAY.as_secs_f64());
+        } else if self.hint_reveal_at.is_some() && !self.hint_dismissed {
+            self.hint_reveal_at = Some(now + HINT_DELAY);
+            set_timeout(HINT_DELAY.as_secs_f64());
+        }
+    }
+
+    fn update_hint_timers(&mut self) -> bool {
+        let now = Instant::now();
+        if self
+            .hint_dismiss_at
+            .is_some_and(|dismiss_at| now >= dismiss_at)
+        {
+            self.hint_visible = false;
+            self.hint_dismissed = true;
+            self.hint_dismiss_at = None;
+            self.hint_reveal_at = None;
+            return true;
+        }
+        if self
+            .hint_reveal_at
+            .is_some_and(|reveal_at| now >= reveal_at)
+        {
+            self.hint_visible = true;
+            self.hint_reveal_at = None;
+            self.hint_page = 0;
+            return true;
+        }
+        false
+    }
+
+    fn next_hint_page(&mut self) -> bool {
+        if !shows_hints(&self.state.mode.mode) {
+            return false;
+        }
+        let now = Instant::now();
+        if self
+            .hint_ignore_input_until
+            .is_some_and(|ignore_until| now <= ignore_until)
+        {
+            return false;
+        }
+        self.hint_reveal_at = None;
+        self.hint_dismiss_at = None;
+        self.hint_page = if self.hint_visible {
+            (self.hint_page + 1) % self.hint_page_count.max(1)
+        } else {
+            0
+        };
+        self.hint_visible = true;
+        self.hint_dismissed = true;
+        self.hint_ignore_input_until = Some(now + Duration::from_millis(50));
+        true
+    }
+
+    fn hint_line(&mut self, cols: usize) -> String {
+        let pages = hint_pages(&self.state.mode.mode, &self.keybinds, cols);
+        self.hint_page_count = pages.len().max(1);
+        self.hint_page %= self.hint_page_count;
+        let Some(formats) = &self.hint_formats else {
+            return String::new();
+        };
+        if !self.hint_visible || !shows_hints(&self.state.mode.mode) {
+            return formats.space.format_string(&" ".repeat(cols));
+        }
+
+        let mode = format!("{:?}", self.state.mode.mode).to_uppercase();
+        let header = fit(
+            &format!(
+                " {mode} {}/{}  Alt+\\ next  ",
+                self.hint_page + 1,
+                self.hint_page_count
+            ),
+            cols,
+        );
+        let mut used = header.chars().count();
+        let mut output = formats.mode.format_string(&header);
+        for (index, (key, desc)) in pages[self.hint_page].iter().enumerate() {
+            let separator = if index == 0 { "" } else { "   " };
+            used += separator.chars().count() + key.chars().count() + 2 + desc.chars().count();
+            output.push_str(&formats.space.format_string(separator));
+            output.push_str(&formats.key.format_string(key));
+            output.push_str(&formats.space.format_string("  "));
+            output.push_str(&formats.desc.format_string(desc));
+        }
+        output.push_str(
+            &formats
+                .space
+                .format_string(&" ".repeat(cols.saturating_sub(used))),
+        );
+        output
+    }
     fn update_focused_pane(&mut self) {
         let active_tab = self.state.tabs.iter().find(|t| t.active);
 
@@ -249,12 +435,25 @@ impl State {
                     self.widget_map.clone(),
                 );
             }
+            Event::InputReceived => {
+                tracing::Span::current().record("event_type", "Event::InputReceived");
+                self.input_received();
+            }
+            Event::InitialKeybinds(keybinds) => {
+                tracing::Span::current().record("event_type", "Event::InitialKeybinds");
+                self.keybinds = keybinds;
+                should_render = true;
+            }
             Event::ModeUpdate(mode_info) => {
                 tracing::Span::current().record("event_type", "Event::ModeUpdate");
                 tracing::debug!(mode = ?mode_info.mode);
                 tracing::debug!(mode = ?mode_info.session_name);
 
+                let mode_changed = self.state.mode.mode != mode_info.mode;
                 self.state.mode = mode_info;
+                if mode_changed {
+                    self.mode_changed();
+                }
                 self.state.cache_mask = UpdateEventMask::Mode as u8;
 
                 should_render = true;
@@ -378,6 +577,7 @@ impl State {
             Event::Timer(_) => {
                 tracing::Span::current().record("event_type", "Event::Timer");
                 set_timeout(REFRESH_INTERVAL_SECONDS);
+                self.update_hint_timers();
                 self.state.cache_mask = 0;
 
                 should_render = true;
@@ -386,6 +586,89 @@ impl State {
         };
         should_render
     }
+}
+
+fn shows_hints(mode: &InputMode) -> bool {
+    matches!(
+        mode,
+        InputMode::Resize
+            | InputMode::Pane
+            | InputMode::Tab
+            | InputMode::Scroll
+            | InputMode::Search
+            | InputMode::Session
+            | InputMode::Move
+            | InputMode::Tmux
+    )
+}
+
+fn hint_pages(mode: &InputMode, keybinds: &KeybindsVec, cols: usize) -> Vec<Vec<(String, String)>> {
+    let width = cols.saturating_sub(28).max(1);
+    let mut bindings: Vec<_> = keybinds
+        .iter()
+        .find(|(input_mode, _)| input_mode == mode)
+        .map(|(_, bindings)| bindings.iter().collect())
+        .unwrap_or_default();
+    bindings.sort_by_key(|(key, _)| !key.key_modifiers.is_empty());
+
+    let mut pages = Vec::new();
+    let mut page = Vec::new();
+    let mut page_width = 0;
+    for (key, actions) in bindings {
+        let key = fit(&key.to_string(), width);
+        let desc = fit(
+            &actions_label(actions),
+            width.saturating_sub(key.chars().count() + 2),
+        );
+        let entry_width = key.chars().count() + 2 + desc.chars().count();
+        if !page.is_empty() && page_width + 3 + entry_width > width {
+            pages.push(page);
+            page = Vec::new();
+            page_width = 0;
+        }
+        page_width += usize::from(!page.is_empty()) * 3 + entry_width;
+        page.push((key, desc));
+    }
+    if !page.is_empty() {
+        pages.push(page);
+    }
+    if pages.is_empty() {
+        pages.push(Vec::new());
+    }
+    pages
+}
+
+fn actions_label(actions: &[Action]) -> String {
+    actions
+        .iter()
+        .filter(|action| actions.len() == 1 || !matches!(action, Action::SwitchToMode { .. }))
+        .map(|action| match action {
+            Action::SwitchToMode { input_mode } => format!("{input_mode:?} mode"),
+            action => humanize(&action.to_string()),
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+fn humanize(name: &str) -> String {
+    let mut output = String::with_capacity(name.len() + 4);
+    for (index, character) in name.chars().enumerate() {
+        if index > 0 && character.is_uppercase() {
+            output.push(' ');
+        }
+        output.push(character);
+    }
+    output
+}
+
+fn fit(text: &str, width: usize) -> String {
+    let mut characters = text.chars();
+    let mut output: String = characters.by_ref().take(width).collect();
+    if characters.next().is_some() && width > 0 {
+        output.pop();
+        output.push('…');
+    }
+    output
 }
 
 fn register_widgets(configuration: &BTreeMap<String, String>) -> BTreeMap<String, Arc<dyn Widget>> {
@@ -459,5 +742,35 @@ mod test {
             state.state.command_results["command_branch"].context["timestamp"],
             original_timestamp
         );
+    }
+
+    #[test]
+    fn paginates_single_key_before_modified_key() {
+        let mode = ModeInfo {
+            mode: InputMode::Pane,
+            keybinds: vec![(
+                InputMode::Pane,
+                vec![
+                    (
+                        "Ctrl b".parse().unwrap(),
+                        vec![Action::SwitchToMode {
+                            input_mode: InputMode::Tmux,
+                        }],
+                    ),
+                    (
+                        "a".parse().unwrap(),
+                        vec![Action::SwitchToMode {
+                            input_mode: InputMode::Normal,
+                        }],
+                    ),
+                ],
+            )],
+            ..ModeInfo::default()
+        };
+
+        let pages = hint_pages(&mode.mode, &mode.keybinds, 48);
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0], vec![("a".into(), "Normal mode".into())]);
+        assert_eq!(pages[1], vec![("Ctrl b".into(), "Tmux mode".into())]);
     }
 }
