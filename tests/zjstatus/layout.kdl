@@ -19,6 +19,7 @@ layout {
             hint_desc_format          "#[fg=#CDD6F4,bg=$bg]"
             hint_space_format         "#[bg=$bg]"
             hint_idle_format          "{command_vcs}"
+            hint_idle_right_format    "{command_load}"
             format_precedence         "lrc"
             format_hide_on_overlength "false"
 
@@ -78,6 +79,10 @@ layout {
             command_vcs_rendermode         "dynamic"
             command_vcs_interval           "2"
             command_vcs_hideonemptystdout  "true"
+            command_load_command            "/mnt/wsl/PHYSICALDRIVE0p1/opt/zjstatus/examples/host-load.sh"
+            command_load_format             "{stdout}"
+            command_load_rendermode         "dynamic"
+            command_load_interval           "2"
 
             command_git_branch_command   "bash -c \"echo $FOO\""
             command_git_branch_cwd       "/Users/daniel"

@@ -2,21 +2,20 @@
 
 session=${ZELLIJ_SESSION_NAME-}
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-panel="\$panel"
+panel=\$panel
 
-fallback() {
-    vcs=$("$script_dir/vcs-status.sh")
-    [ -z "$vcs" ] || printf "#[bg=$panel,fg=#A6DA95,bold]VCS #[bg=$panel,fg=#CAD3F5]%s" "$vcs"
+vcs() {
+    "$script_dir/vcs-status.sh"
     exit 0
 }
 
-[ -n "$session" ] || fallback
-session=$(printf '%s' "$session" | sed 's/[^A-Za-z0-9_.-]/_/g')
+[ -n "$session" ] || vcs
+session=session-$(printf '%s' "$session" | sed 's/[^A-Za-z0-9_.-]/_/g')
 dir=${XDG_RUNTIME_DIR:-/tmp}/pi-zellij-status-$(id -u)/$session
-[ -d "$dir" ] || fallback
+[ -d "$dir" ] || vcs
 
 set -- "$dir"/*.json
-[ -e "$1" ] || fallback
+[ -e "$1" ] || vcs
 
 valid=
 for file do
@@ -33,24 +32,24 @@ for file do
     esac
 done
 
-[ -n "$valid" ] || fallback
+[ -n "$valid" ] || vcs
 # Filenames cannot contain spaces: both the session name and PID are sanitized.
 # shellcheck disable=SC2086
 pi=$(jq -sr '
-    def short: tostring | gsub("[\\n\\t]"; " ") | if length > 48 then .[:47] + "…" else . end;
+    def short:
+        tostring | gsub("[\u0000-\u001F\u007F-\u009F│ ]"; " ") | gsub("#\\["; "#〔") |
+        if length > 24 then .[:23] + "…" else . end;
+    def paint($color; $text): "#[bg=$panel,fg=" + $color + "]" + $text;
     sort_by(.busy | not) |
     map(
-        "#[bg=$panel,fg=#8BD5CA,bold]PI "
-        + (if .sessionName then "#[bg=$panel,fg=#C6A0F6][" + (.sessionName | short) + "] " else "" end)
-        + "#[bg=$panel,fg=#CAD3F5]" + (.model // "?")
-        + (if .busy then " #[bg=$panel,fg=#EED49F]●" else " #[bg=$panel,fg=#A6DA95]○" end)
-        + (if .busy and .tool then " " + .tool else "" end)
-        + "#[bg=$panel,fg=#CAD3F5]"
-        + (if .goal then "  #[bg=$panel,fg=#C6A0F6,bold]goal: #[bg=$panel,fg=#CAD3F5]" + (.goal | short) else "" end)
-        + (if .todo then "  #[bg=$panel,fg=#EED49F,bold]todo: #[bg=$panel,fg=#CAD3F5]" + (.todo | short) else "" end)
-        + (if (.subagents | length) > 0 then "  #[bg=$panel,fg=#8AADF4,bold]agents: #[bg=$panel,fg=#CAD3F5]" + (.subagents | length | tostring) else "" end)
-    ) | join("  |  ")
-' $valid 2>/dev/null) || fallback
+        paint("#C6A0F6"; "π" + (if .sessionName then " [" + (.sessionName | short) + "]" else "" end)) +
+        (if .busy then paint("#EED49F"; " ●") else paint("#A6DA95"; " ○") end) +
+        (if .todo then paint("#EED49F"; " 󰄬 " + (.todo | short)) else "" end) +
+        (if (.subagents | length) > 0 then paint("#8AADF4"; " 󰓻 " + (.subagents | length | tostring)) else "" end) +
+        (if .busy and .tool then paint("#8BD5CA"; " " + (.tool | short)) else "" end) +
+        (if .goal then paint("#C6A0F6"; " 󰘳 " + (.goal | short)) else "" end)
+    ) | join("#[bg=$panel,fg=#494D64] · ")
+' $valid 2>/dev/null) || vcs
 printf '%s' "$pi"
-vcs=$("$script_dir/vcs-status.sh")
-[ -z "$vcs" ] || printf "#[bg=$panel,fg=#6E738D]  |  #[bg=$panel,fg=#A6DA95,bold]VCS #[bg=$panel,fg=#CAD3F5]%s" "$vcs"
+vcs_output=$("$script_dir/vcs-status.sh")
+[ -z "$vcs_output" ] || printf "#[bg=$panel]  %s" "$vcs_output"

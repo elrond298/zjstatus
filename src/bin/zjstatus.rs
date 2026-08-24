@@ -80,6 +80,7 @@ struct State {
     hint_page_count: usize,
     hint_formats: Option<HintFormats>,
     hint_idle_parts: Vec<FormattedPart>,
+    hint_idle_right_parts: Vec<FormattedPart>,
     err: Option<anyhow::Error>,
 }
 
@@ -143,6 +144,13 @@ impl ZellijPlugin for State {
         self.hint_idle_parts = FormattedPart::multiple_from_format_string(
             configuration
                 .get("hint_idle_format")
+                .map(String::as_str)
+                .unwrap_or_default(),
+            &configuration,
+        );
+        self.hint_idle_right_parts = FormattedPart::multiple_from_format_string(
+            configuration
+                .get("hint_idle_right_format")
                 .map(String::as_str)
                 .unwrap_or_default(),
             &configuration,
@@ -344,20 +352,33 @@ impl State {
     }
 
     fn idle_line(&mut self, cols: usize) -> String {
-        let output = self
+        let mut left = self
             .hint_idle_parts
             .iter_mut()
             .fold(String::new(), |output, part| {
                 output + &part.format_string_with_widgets(&self.widget_map, &self.state)
             });
-        let used = console::measure_text_width(&output);
+        let mut right = self
+            .hint_idle_right_parts
+            .iter_mut()
+            .fold(String::new(), |output, part| {
+                output + &part.format_string_with_widgets(&self.widget_map, &self.state)
+            });
         let Some(formats) = &self.hint_formats else {
-            return output;
+            return left + &right;
         };
-        output
-            + &formats
-                .space
-                .format_string(&" ".repeat(cols.saturating_sub(used)))
+        let mut left_width = console::measure_text_width(&left);
+        let right_width = console::measure_text_width(&right);
+        if left_width + right_width > cols {
+            let right_reserve = right_width.min(cols / 3);
+            left = console::truncate_str(&left, cols - right_reserve, "…").into_owned();
+            left_width = console::measure_text_width(&left);
+            right = fit_right_blocks(right, cols.saturating_sub(left_width));
+        }
+        let gap = cols.saturating_sub(
+            console::measure_text_width(&left) + console::measure_text_width(&right),
+        );
+        left + &formats.space.format_string(&" ".repeat(gap)) + &right
     }
 
     fn hint_line(&mut self, cols: usize) -> String {
@@ -686,6 +707,20 @@ fn humanize(name: &str) -> String {
     output
 }
 
+fn fit_right_blocks(mut text: String, max_width: usize) -> String {
+    while console::measure_text_width(&text) > max_width {
+        let ends: Vec<_> = text.match_indices(' ').map(|(index, _)| index).collect();
+        match ends.len() {
+            0 => return String::new(),
+            3.. => text.truncate(ends[ends.len() - 2] + ' '.len_utf8()),
+            _ => {
+                text.drain(..ends[0] + ' '.len_utf8());
+            }
+        }
+    }
+    text
+}
+
 fn fit(text: &str, width: usize) -> String {
     let mut characters = text.chars();
     let mut output: String = characters.by_ref().take(width).collect();
@@ -797,5 +832,18 @@ mod test {
         assert_eq!(pages.len(), 2);
         assert_eq!(pages[0], vec![("a".into(), "Normal mode".into())]);
         assert_eq!(pages[1], vec![("Ctrl b".into(), "Tmux mode".into())]);
+    }
+
+    #[test]
+    fn narrow_idle_rows_truncate_left_and_keep_right_blocks() {
+        assert_eq!(
+            console::truncate_str("branch commit message", 12, "…"),
+            "branch comm…"
+        );
+        let metrics = "D N L H ".to_owned();
+        assert_eq!(fit_right_blocks(metrics.clone(), 6), "D N L ");
+        assert_eq!(fit_right_blocks(metrics.clone(), 4), "D N ");
+        assert_eq!(fit_right_blocks(metrics, 2), "N ");
+        assert_eq!(fit_right_blocks("plain".to_owned(), 4), "");
     }
 }

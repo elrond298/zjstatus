@@ -26,7 +26,7 @@ export default function (pi: ExtensionAPI) {
 
   const uid = process.getuid?.() ?? 0;
   const root = join(process.env.XDG_RUNTIME_DIR || tmpdir(), `pi-zellij-status-${uid}`);
-  const dir = join(root, zellijSession.replace(/[^A-Za-z0-9_.-]/g, "_"));
+  const dir = join(root, `session-${zellijSession.replace(/[^A-Za-z0-9_.-]/g, "_")}`);
   const file = join(dir, `${process.pid}.json`);
   const temp = `${file}.tmp`;
   const todos = new Map<string, string>();
