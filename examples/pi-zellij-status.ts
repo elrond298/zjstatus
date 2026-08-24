@@ -4,6 +4,21 @@ import { chmod, mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+type TodoState = "pending" | "in_progress" | "completed";
+
+interface TodoItem {
+  status: TodoState;
+  text: string;
+}
+
+interface TodoSummary {
+  total: number;
+  pending: number;
+  active: number;
+  completed: number;
+  detail?: string;
+}
+
 interface Status {
   pid: number;
   paneId?: string;
@@ -16,7 +31,7 @@ interface Status {
   busy: boolean;
   tool?: string;
   goal?: string;
-  todo?: string;
+  todo?: TodoSummary;
   subagents: string[];
   updatedAt: number;
 }
@@ -35,7 +50,7 @@ export default function (pi: ExtensionAPI) {
   const dir = join(root, `session-${zellijSession.replace(/[^A-Za-z0-9_.-]/g, "_")}`);
   const file = join(dir, `${process.pid}.json`);
   const temp = `${file}.tmp`;
-  const todos = new Map<string, string>();
+  const todos = new Map<string, TodoItem>();
   const subagents = new Map<string, string>();
   const pending = new Map<string, { name: string; args: any }>();
   const status: Status = {
@@ -48,7 +63,19 @@ export default function (pi: ExtensionAPI) {
   let writes = Promise.resolve();
 
   const publish = () => {
-    status.todo = Array.from(todos.values()).at(-1);
+    const items = Array.from(todos.values());
+    const pendingCount = items.filter((item) => item.status === "pending").length;
+    const activeItems = items.filter((item) => item.status === "in_progress");
+    const completedCount = items.filter((item) => item.status === "completed").length;
+    status.todo = items.length
+      ? {
+          total: items.length,
+          pending: pendingCount,
+          active: activeItems.length,
+          completed: completedCount,
+          detail: activeItems.at(-1)?.text,
+        }
+      : undefined;
     status.subagents = Array.from(subagents.values());
     status.updatedAt = Date.now();
     const json = JSON.stringify(status);
@@ -62,28 +89,51 @@ export default function (pi: ExtensionAPI) {
       .catch(() => {});
   };
 
+  const setTodos = (items: any[]) => {
+    todos.clear();
+    for (const item of items) {
+      if (!["pending", "in_progress", "completed"].includes(item?.status)) continue;
+      const status = item.status as TodoState;
+      const text =
+        status === "in_progress"
+          ? (item.activeForm ?? item.content ?? item.subject ?? "working")
+          : (item.subject ?? item.content ?? item.activeForm ?? "todo");
+      todos.set(String(item.id ?? todos.size), { status, text });
+    }
+  };
+
+  const applyTodoResult = (details: any) => {
+    const items = details?.tasks ?? details?.todos;
+    if (!Array.isArray(items)) return false;
+    setTodos(items);
+    return true;
+  };
+
   const applyTodo = (name: string, args: any) => {
     if (name === "todo" && args?.action === "clear") {
       todos.clear();
       return;
     }
     if (name === "todowrite" && Array.isArray(args?.todos)) {
-      todos.clear();
-      for (const item of args.todos) {
-        if (item?.status === "in_progress") {
-          todos.set(String(item.id ?? "current"), item.activeForm ?? item.content ?? "working");
-        }
-      }
+      setTodos(args.todos);
       return;
     }
     if (name !== "todo" || args?.action !== "update" || args?.id == null) return;
     const id = String(args.id);
-    if (["completed", "deleted"].includes(args.status)) todos.delete(id);
-    else if (args.status === "in_progress") {
-      todos.set(id, args.activeForm ?? args.subject ?? `todo ${id}`);
-    } else if (todos.has(id) && args.activeForm) {
-      todos.set(id, args.activeForm);
+    if (args.status === "deleted") {
+      todos.delete(id);
+      return;
     }
+    const previous = todos.get(id);
+    const nextStatus = ["pending", "in_progress", "completed"].includes(args.status)
+      ? (args.status as TodoState)
+      : previous?.status;
+    if (!nextStatus) return;
+    const text =
+      nextStatus === "in_progress"
+        ? (args.activeForm ?? args.subject ?? previous?.text ?? `todo ${id}`)
+        : (args.subject ?? previous?.text ?? args.activeForm ?? `todo ${id}`);
+    todos.set(id, { status: nextStatus, text });
   };
 
   const readText = (message: any) => {
@@ -165,6 +215,12 @@ export default function (pi: ExtensionAPI) {
           if (part?.type === "toolCall") applyTodo(part.name, part.arguments);
         }
       }
+      if (
+        message?.role === "toolResult" &&
+        ["todo", "todowrite"].includes(message.toolName)
+      ) {
+        applyTodoResult(message.details);
+      }
       if (message?.role === "toolResult" && message.toolName === "Agent") {
         const details = message.details;
         if (details?.status === "background" && details.agentId) {
@@ -228,7 +284,11 @@ export default function (pi: ExtensionAPI) {
     const call = pending.get(event.toolCallId);
     pending.delete(event.toolCallId);
     status.tool = Array.from(pending.values()).at(-1)?.name;
-    if (!event.isError && call) applyTodo(call.name, call.args);
+    if (!event.isError && call) {
+      const synced =
+        ["todo", "todowrite"].includes(call.name) && applyTodoResult(event.result?.details);
+      if (!synced) applyTodo(call.name, call.args);
+    }
 
     if (!event.isError && event.toolName === "Agent") {
       const details = event.result?.details;
