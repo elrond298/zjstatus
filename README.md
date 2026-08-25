@@ -158,6 +158,38 @@ idle status
 
 Each item's reduction list has one priority per transition between output lines. Priorities for an item must be strictly increasing. The example therefore reduces VCS once, then Load three times, VCS three more times, and finally Pi. Missing levels and blank lines repeat the last valid level; extra levels are ignored; a level that would grow wider keeps the prior level. Only a line containing exactly `@hide` hides the item. `hint_idle_format` and `hint_idle_right_format` remain available as non-responsive fallbacks.
 
+### Responsive main status line
+
+The original left/center/right status line can also reduce by width. Add numbered formats; omitted levels inherit the previous format. Reduction happens in rounds: every region reaches level 1 before any region reaches level 2. Within a round, the rightmost region in `format_precedence` reduces first.
+
+```kdl
+format_responsive "true"
+format_precedence "lrc"
+
+format_left   "{mode} {session} {swap_layout}"
+format_left_1 "{mode} {session}"
+format_left_2 "{mode}"
+format_left_3 ""
+format_left_4 ""
+
+format_center   "{tabs}"
+format_center_1 "{tabs}"
+format_center_2 "{tabs}"
+format_center_3 "{tabs}"
+format_center_4 "{tabs}"
+
+format_right   "{notifications}{command_hostname}{datetime}"
+format_right_1 "{notifications}{command_hostname}"
+format_right_2 "{notifications}"
+format_right_3 "{notifications}"
+format_right_4 "{notifications}"
+
+tab_locator_format         "{left_arrow}{index}{right_arrow}"
+tab_locator_compact_format "{index}"
+```
+
+At levels 1 and 2, `{tabs}` automatically reduces to nearby tabs and then the active tab. Levels 3 and 4 render the active position as `&lt;- 3 -&gt;` and `3`. A current notification survives every configured right-side level. If the minimum layout still does not fit, zjstatus keeps the active tab position and gives the remaining width to the notification; only then is the notification truncated.
+
 ## 🏎️ Quick Start for zjstatus
 
 Place the following configuration in your default layout file, e.g. `~/.config/zellij/layouts/default.kdl`. Right after starting zellij, it will prompt for permissions, which need to be granted in order for zjstatus to work. Simply navigate to the pane or click on it and press `y`. This must be repeated on updates. For more details on permissions, please visit the [wiki](https://github.com/dj95/zjstatus/wiki/2-%E2%80%90-Permissions).

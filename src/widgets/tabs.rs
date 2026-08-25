@@ -29,6 +29,8 @@ pub struct TabsWidget {
     tab_truncate_start_format: Vec<FormattedPart>,
     tab_truncate_end_format: Vec<FormattedPart>,
     tab_zero_based_index: bool,
+    active_index_format: Vec<FormattedPart>,
+    active_index_only_format: Vec<FormattedPart>,
 }
 
 impl TabsWidget {
@@ -96,6 +98,21 @@ impl TabsWidget {
             None => false,
         };
 
+        let active_index_format = FormattedPart::multiple_from_format_string(
+            config
+                .get("tab_locator_format")
+                .map(String::as_str)
+                .unwrap_or("{left_arrow}{index}{right_arrow}"),
+            config,
+        );
+        let active_index_only_format = FormattedPart::multiple_from_format_string(
+            config
+                .get("tab_locator_compact_format")
+                .map(String::as_str)
+                .unwrap_or("{index}"),
+            config,
+        );
+
         let separator = config
             .get("tab_separator")
             .map(|s| FormattedPart::from_format_string(s, config));
@@ -126,131 +143,173 @@ impl TabsWidget {
             tab_truncate_start_format,
             tab_truncate_end_format,
             tab_zero_based_index,
+            active_index_format,
+            active_index_only_format,
         }
     }
 }
 
 impl Widget for TabsWidget {
     fn process(&self, _name: &str, state: &ZellijState) -> String {
-        let mut output = "".to_owned();
-        let mut counter = 0;
+        self.render_at_level(state, 0)
+    }
 
-        let (truncated_start, truncated_end, tabs) =
-            get_tab_window(&state.tabs, self.tab_display_count);
+    fn process_at_level(&self, _name: &str, state: &ZellijState, level: usize) -> String {
+        self.render_at_level(state, level)
+    }
+
+    fn process_click(&self, _name: &str, state: &ZellijState, pos: usize) {
+        self.click_at_level(state, pos, 0);
+    }
+
+    fn process_click_at_level(&self, _name: &str, state: &ZellijState, pos: usize, level: usize) {
+        self.click_at_level(state, pos, level);
+    }
+}
+
+impl TabsWidget {
+    fn render_at_level(&self, state: &ZellijState, level: usize) -> String {
+        if level >= 3 {
+            return self.render_active_index(state, level >= 4);
+        }
+
+        let (truncated_start, truncated_end, tabs) = self.tab_window_at_level(state, level);
+        let mut output = String::new();
 
         if truncated_start > 0 {
-            for f in &self.tab_truncate_start_format {
-                let mut content = f.content.clone();
-
-                if content.contains("{count}") {
-                    content = content.replace("{count}", (truncated_start).to_string().as_str());
-                }
-
-                output = format!("{output}{}", f.format_string(&content));
+            for part in &self.tab_truncate_start_format {
+                let content = part
+                    .content
+                    .replace("{count}", &truncated_start.to_string());
+                output.push_str(&part.format_string(&content));
             }
         }
 
-        for tab in &tabs {
-            let content = self.render_tab(tab, &state.panes, &state.mode);
-            counter += 1;
-
-            output = format!("{}{}", output, content);
-
-            if counter < tabs.len()
-                && let Some(sep) = &self.separator
+        for (index, tab) in tabs.iter().enumerate() {
+            output.push_str(&self.render_tab(tab, &state.panes, &state.mode));
+            if index + 1 < tabs.len()
+                && let Some(separator) = &self.separator
             {
-                output = format!("{}{}", output, sep.format_string(&sep.content));
+                output.push_str(&separator.format_string(&separator.content));
             }
         }
 
         if truncated_end > 0 {
-            for f in &self.tab_truncate_end_format {
-                let mut content = f.content.clone();
-
-                if content.contains("{count}") {
-                    content = content.replace("{count}", (truncated_end).to_string().as_str());
-                }
-
-                output = format!("{output}{}", f.format_string(&content));
+            for part in &self.tab_truncate_end_format {
+                let content = part.content.replace("{count}", &truncated_end.to_string());
+                output.push_str(&part.format_string(&content));
             }
         }
 
         output
     }
 
-    fn process_click(&self, _name: &str, state: &ZellijState, pos: usize) {
-        let mut offset = 0;
-        let mut counter = 0;
+    fn click_at_level(&self, state: &ZellijState, pos: usize, level: usize) {
+        if level >= 3 {
+            return;
+        }
 
-        let (truncated_start, truncated_end, tabs) =
-            get_tab_window(&state.tabs, self.tab_display_count);
-
-        let active_pos = &state
+        let (truncated_start, truncated_end, tabs) = self.tab_window_at_level(state, level);
+        let Some(active_pos) = state
             .tabs
             .iter()
-            .find(|t| t.active)
-            .expect("no active tab")
-            .position
-            + 1;
+            .find(|tab| tab.active)
+            .map(|tab| tab.position + 1)
+        else {
+            return;
+        };
+        let mut offset = 0;
 
         if truncated_start > 0 {
-            for f in &self.tab_truncate_start_format {
-                let mut content = f.content.clone();
-
-                if content.contains("{count}") {
-                    content = content.replace("{count}", (truncated_end).to_string().as_str());
-                }
-
-                offset += console::measure_text_width(&f.format_string(&content));
-
+            for part in &self.tab_truncate_start_format {
+                let content = part
+                    .content
+                    .replace("{count}", &truncated_start.to_string());
+                offset += console::measure_text_width(&part.format_string(&content));
                 if pos <= offset {
                     switch_tab_to(active_pos.saturating_sub(1) as u32);
                 }
             }
         }
 
-        for tab in &tabs {
-            counter += 1;
-
-            let mut rendered_content = self.render_tab(tab, &state.panes, &state.mode);
-
-            if counter < tabs.len()
-                && let Some(sep) = &self.separator
+        for (index, tab) in tabs.iter().enumerate() {
+            let mut content = self.render_tab(tab, &state.panes, &state.mode);
+            if index + 1 < tabs.len()
+                && let Some(separator) = &self.separator
             {
-                rendered_content =
-                    format!("{}{}", rendered_content, sep.format_string(&sep.content));
+                content.push_str(&separator.format_string(&separator.content));
             }
-
-            let content_len = console::measure_text_width(&rendered_content);
-
-            if pos > offset && pos < offset + content_len {
+            let width = console::measure_text_width(&content);
+            if pos > offset && pos < offset + width {
                 switch_tab_to(tab.position as u32 + 1);
-
-                break;
+                return;
             }
-
-            offset += content_len;
+            offset += width;
         }
 
         if truncated_end > 0 {
-            for f in &self.tab_truncate_end_format {
-                let mut content = f.content.clone();
-
-                if content.contains("{count}") {
-                    content = content.replace("{count}", (truncated_end).to_string().as_str());
-                }
-
-                offset += console::measure_text_width(&f.format_string(&content));
-
+            for part in &self.tab_truncate_end_format {
+                let content = part.content.replace("{count}", &truncated_end.to_string());
+                offset += console::measure_text_width(&part.format_string(&content));
                 if pos <= offset {
                     switch_tab_to(cmp::min(active_pos + 1, state.tabs.len()) as u32);
                 }
             }
         }
     }
-}
 
-impl TabsWidget {
+    fn tab_window_at_level(
+        &self,
+        state: &ZellijState,
+        level: usize,
+    ) -> (usize, usize, Vec<TabInfo>) {
+        match level {
+            0 => get_tab_window(&state.tabs, self.tab_display_count),
+            1 => {
+                let count = self
+                    .tab_display_count
+                    .unwrap_or(state.tabs.len())
+                    .clamp(1, 3);
+                if count <= 1 {
+                    active_tab_window(&state.tabs)
+                } else {
+                    get_tab_window(&state.tabs, Some(count))
+                }
+            }
+            _ => active_tab_window(&state.tabs),
+        }
+    }
+
+    fn render_active_index(&self, state: &ZellijState, index_only: bool) -> String {
+        let Some((active_index, active_tab)) =
+            state.tabs.iter().enumerate().find(|(_, tab)| tab.active)
+        else {
+            return String::new();
+        };
+        let index = active_tab.position + usize::from(!self.tab_zero_based_index);
+        let left_arrow = if active_index > 0 { "<- " } else { "" };
+        let right_arrow = if active_index + 1 < state.tabs.len() {
+            " ->"
+        } else {
+            ""
+        };
+        let format = if index_only {
+            &self.active_index_only_format
+        } else {
+            &self.active_index_format
+        };
+
+        format.iter().fold(String::new(), |mut output, part| {
+            let content = part
+                .content
+                .replace("{index}", &index.to_string())
+                .replace("{left_arrow}", left_arrow)
+                .replace("{right_arrow}", right_arrow);
+            output.push_str(&part.format_string(&content));
+            output
+        })
+    }
+
     fn select_format(&self, info: &TabInfo, mode: &ModeInfo) -> &Vec<FormattedPart> {
         if info.active && mode.mode == InputMode::RenameTab {
             return &self.rename_tab_format;
@@ -458,11 +517,21 @@ pub fn get_tab_window(
     )
 }
 
+fn active_tab_window(tabs: &[TabInfo]) -> (usize, usize, Vec<TabInfo>) {
+    let Some(active_index) = tabs.iter().position(|tab| tab.active) else {
+        return (0, 0, Vec::new());
+    };
+    (0, 0, vec![tabs[active_index].clone()])
+}
+
 #[cfg(test)]
 mod test {
+    use std::collections::BTreeMap;
+
     use zellij_tile::prelude::TabInfo;
 
-    use super::get_tab_window;
+    use super::{TabsWidget, get_tab_window};
+    use crate::{config::ZellijState, widgets::widget::Widget};
     use rstest::rstest;
 
     #[rstest]
@@ -838,5 +907,45 @@ mod test {
         let res = get_tab_window(&tabs, max_count);
 
         assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn narrow_levels_keep_the_active_tab_position() {
+        let config = BTreeMap::from([
+            (
+                "tab_truncate_start_format".to_owned(),
+                "<{count}>".to_owned(),
+            ),
+            ("tab_truncate_end_format".to_owned(), "<{count}>".to_owned()),
+            ("tab_active".to_owned(), "{name}".to_owned()),
+        ]);
+        let widget = TabsWidget::new(&config);
+        let state = ZellijState {
+            tabs: vec![
+                TabInfo {
+                    position: 0,
+                    name: "one".to_owned(),
+                    ..Default::default()
+                },
+                TabInfo {
+                    position: 1,
+                    name: "two".to_owned(),
+                    active: true,
+                    ..Default::default()
+                },
+                TabInfo {
+                    position: 2,
+                    name: "three".to_owned(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let active_name = widget.process_at_level("tabs", &state, 2);
+        assert!(active_name.contains("two"));
+        assert!(!active_name.contains("<1>"));
+        assert_eq!(widget.process_at_level("tabs", &state, 3), "<- 2 ->");
+        assert_eq!(widget.process_at_level("tabs", &state, 4), "2");
     }
 }
