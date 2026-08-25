@@ -77,7 +77,7 @@ To build this fork and install `zjstatus.wasm` plus its responsive status script
 ./install.sh
 ```
 
-The destination is `$ZELLIJ_CONFIG_DIR` when set, otherwise `$XDG_CONFIG_HOME/zellij`, falling back to `~/.config/zellij`. When using a non-default directory, point the `command_*_command` paths in your layout to its `scripts` directory.
+The destination is `$ZELLIJ_CONFIG_DIR` when set, otherwise `$XDG_CONFIG_HOME/zellij`, falling back to `~/.config/zellij`. When using a non-default directory, point the `command_*_command` paths in your layout to its `scripts` directory. Builds use one Cargo job by default to limit memory usage; set `CARGO_BUILD_JOBS` to opt into more parallelism.
 
 ## ❄️ Installation with nix flake
 
