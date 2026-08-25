@@ -2,13 +2,15 @@ use kdl::{KdlDocument, KdlError};
 use lazy_static::lazy_static;
 use std::{
     collections::BTreeMap,
-    fs::{File, remove_file},
+    fs::{OpenOptions, read_to_string, remove_file},
+    io::Write,
     ops::Sub,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use chrono::{DateTime, Duration, Local};
 use regex::Regex;
+use uuid::Uuid;
 #[cfg(all(not(feature = "bench"), not(test)))]
 use zellij_tile::shim::{run_command, run_command_with_env_variables_and_cwd};
 
@@ -183,7 +185,7 @@ fn run_command_if_needed(command_config: CommandConfig, name: &str, state: &Zell
     }
 
     let ts = Local::now();
-    let last_run = get_timestamp_from_event_or_default(name, state, command_config.interval);
+    let last_run = get_timestamp_from_event_or_default(name, state);
 
     if ts.timestamp() - last_run.timestamp() >= command_config.interval {
         let cwd = if command_config.follow_focus_cwd {
@@ -195,8 +197,15 @@ fn run_command_if_needed(command_config: CommandConfig, name: &str, state: &Zell
             command_config.cwd.clone()
         };
 
+        // A slow command keeps its last value visible; never overlap another copy.
+        let run_id = Uuid::new_v4().to_string();
+        if !acquire_command_lock(name, state, &run_id) {
+            return false;
+        }
+
         let mut context = BTreeMap::new();
         context.insert("name".to_owned(), name.to_owned());
+        context.insert("run_id".to_owned(), run_id);
         context.insert(
             "timestamp".to_owned(),
             ts.format(TIMESTAMP_FORMAT).to_string(),
@@ -360,17 +369,9 @@ fn get_env_vars(doc: KdlDocument) -> BTreeMap<String, String> {
     output
 }
 
-fn get_timestamp_from_event_or_default(
-    name: &str,
-    state: &ZellijState,
-    interval: i64,
-) -> DateTime<Local> {
+fn get_timestamp_from_event_or_default(name: &str, state: &ZellijState) -> DateTime<Local> {
     let command_result = state.command_results.get(name);
     if command_result.is_none() {
-        if lock(name, state.clone()) {
-            return Local::now();
-        }
-
         return Sub::<Duration>::sub(Local::now(), Duration::try_days(1).unwrap());
     }
     let command_result = command_result.unwrap();
@@ -381,34 +382,41 @@ fn get_timestamp_from_event_or_default(
     }
     let ts_context = ts_context.unwrap();
 
-    if Local::now().timestamp() - state.start_time.timestamp() < interval {
-        release_command_lock(state, name);
-    }
-
     match DateTime::parse_from_str(ts_context, TIMESTAMP_FORMAT) {
         Ok(ts) => ts.into(),
         Err(_) => Sub::<Duration>::sub(Local::now(), Duration::try_days(1).unwrap()),
     }
 }
 
-fn lock(name: &str, state: ZellijState) -> bool {
-    let path = format!("/tmp/{}.{}.lock", state.plugin_uuid, name);
-
-    if !Path::new(&path).exists() {
-        let _ = File::create(path);
-
-        return false;
-    }
-
-    true
+fn command_lock_path(name: &str, state: &ZellijState) -> String {
+    format!("/tmp/{}.{}.lock", state.plugin_uuid, name)
 }
 
-pub fn release_command_lock(state: &ZellijState, name: &str) {
-    let path = format!("/tmp/{}.{}.lock", state.plugin_uuid, name);
-
-    if Path::new(&path).exists() {
+fn acquire_command_lock(name: &str, state: &ZellijState, run_id: &str) -> bool {
+    let path = command_lock_path(name, state);
+    // ponytail: fail closed on stale locks; add age/PID recovery only if stale output matters.
+    let Ok(mut lock) = OpenOptions::new().write(true).create_new(true).open(&path) else {
+        return false;
+    };
+    if lock.write_all(run_id.as_bytes()).is_ok() {
+        true
+    } else {
         let _ = remove_file(path);
+        false
     }
+}
+
+pub fn release_command_lock(state: &ZellijState, name: &str, run_id: &str) -> bool {
+    let path = command_lock_path(name, state);
+    if read_to_string(&path).ok().as_deref() != Some(run_id) {
+        return false;
+    }
+    remove_file(path).is_ok()
+}
+
+#[cfg(test)]
+fn clear_command_lock(state: &ZellijState, name: &str) {
+    let _ = remove_file(command_lock_path(name, state));
 }
 
 fn commandline_parser(input: &str) -> Vec<String> {
@@ -511,8 +519,8 @@ mod test {
     }
 
     #[test]
-    pub fn test_release_command_lock_allows_rerun_without_result() {
-        let state = ZellijState {
+    pub fn command_lock_prevents_overlapping_runs() {
+        let mut state = ZellijState {
             plugin_uuid: "release_command_lock_test".to_owned(),
             ..ZellijState::default()
         };
@@ -528,7 +536,7 @@ mod test {
             hide_on_empty_stdout: false,
         };
 
-        release_command_lock(&state, "test_release");
+        clear_command_lock(&state, "test_release");
 
         assert!(run_command_if_needed(
             command_config.clone(),
@@ -541,24 +549,70 @@ mod test {
             &state
         ));
 
-        release_command_lock(&state, "test_release");
+        clear_command_lock(&state, "test_release");
 
         assert!(run_command_if_needed(
+            command_config.clone(),
+            "test_release",
+            &state
+        ));
+        assert!(!run_command_if_needed(
+            command_config.clone(),
+            "test_release",
+            &state
+        ));
+
+        clear_command_lock(&state, "test_release");
+        state.command_results.insert(
+            "test_release".to_owned(),
+            CommandResult {
+                context: BTreeMap::from([("timestamp".to_owned(), "0".to_owned())]),
+                ..CommandResult::default()
+            },
+        );
+        assert!(run_command_if_needed(
+            command_config.clone(),
+            "test_release",
+            &state
+        ));
+        assert!(!run_command_if_needed(
             command_config,
             "test_release",
             &state
         ));
 
-        release_command_lock(&state, "test_release");
+        clear_command_lock(&state, "test_release");
+    }
+
+    #[test]
+    fn focus_changes_do_not_overlap_commands() {
+        let state = ZellijState {
+            plugin_uuid: "command_generation_test".to_owned(),
+            ..ZellijState::default()
+        };
+        let name = "focus";
+        clear_command_lock(&state, name);
+
+        assert!(acquire_command_lock(name, &state, "a1"));
+        assert!(!acquire_command_lock(name, &state, "b1"));
+        assert!(!acquire_command_lock(name, &state, "a2"));
+        assert!(!release_command_lock(&state, name, "older"));
+        assert!(release_command_lock(&state, name, "a1"));
+
+        assert!(acquire_command_lock(name, &state, "a2"));
+        assert!(!release_command_lock(&state, name, "a1"));
+        assert!(!acquire_command_lock(name, &state, "a3"));
+        assert!(release_command_lock(&state, name, "a2"));
     }
 
     #[rstest]
     // no result, interval 1 second
     #[case(1, &ZellijState{ plugin_uuid: "test_command_result_1".to_owned(), ..Default::default() }, true)]
     // only run once without a result
-    #[case(0, &ZellijState::default(), true)]
+    #[case(0, &ZellijState{ plugin_uuid: "test_command_result_2".to_owned(), ..Default::default() }, true)]
     // do not run with run once and result
     #[case(0, &ZellijState {
+        plugin_uuid: "test_command_result_3".to_owned(),
         command_results: BTreeMap::from([(
             "test".to_owned(),
             CommandResult::default(),
@@ -567,6 +621,7 @@ mod test {
     }, false)]
     // run if interval is exceeded
     #[case(1, &ZellijState {
+        plugin_uuid: "test_command_result_4".to_owned(),
         command_results: BTreeMap::from([(
             "test".to_owned(),
             CommandResult{
@@ -578,6 +633,7 @@ mod test {
     }, true)]
     // do not run if interval is not exceeded
     #[case(1, &ZellijState {
+        plugin_uuid: "test_command_result_5".to_owned(),
         command_results: BTreeMap::from([(
             "test".to_owned(),
             CommandResult{
@@ -609,6 +665,6 @@ mod test {
         );
         assert_eq!(res, expected);
 
-        release_command_lock(&state, "test");
+        clear_command_lock(state, "test");
     }
 }
