@@ -392,26 +392,24 @@ impl State {
 
     fn hint_line(&mut self, cols: usize) -> String {
         let mode = format!("{:?}", self.state.mode.mode).to_uppercase();
-        let mut key_widths = self
+        let hint_sizes = self
             .keybinds
             .iter()
             .find(|(input_mode, _)| input_mode == &self.state.mode.mode)
             .map(|(_, bindings)| {
                 bindings
                     .iter()
-                    .map(|(key, _)| console::measure_text_width(&key.to_string()))
+                    .map(|(key, actions)| {
+                        (
+                            console::measure_text_width(&key.to_string()),
+                            console::measure_text_width(&actions_label(actions)),
+                        )
+                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        key_widths.sort_unstable();
-        let max_pages = key_widths.len().max(1);
-        let minimum_hint_width = match key_widths.as_slice() {
-            [] => 1,
-            [width] => *width,
-            widths => widths[widths.len() - 1].max(widths[0] + widths[1] + 3),
-        };
-        let (header_kind, header_width) =
-            hint_header_layout(&mode, max_pages, minimum_hint_width, cols);
+        let max_pages = hint_sizes.len().max(1);
+        let (header_kind, header_width) = hint_header_layout(&mode, max_pages, &hint_sizes, cols);
         let content_width = cols.saturating_sub(header_width);
         let pages = hint_pages(&self.state.mode.mode, &self.keybinds, content_width);
         self.hint_page_count = pages.len().max(1);
@@ -433,12 +431,10 @@ impl State {
             used += console::measure_text_width(separator) + console::measure_text_width(key);
             output.push_str(&formats.space.format_string(separator));
             output.push_str(&formats.key.format_string(key));
-            if !desc.is_empty() {
-                used += console::measure_text_width(key_desc_separator)
-                    + console::measure_text_width(desc);
-                output.push_str(&formats.space.format_string(key_desc_separator));
-                output.push_str(&formats.desc.format_string(desc));
-            }
+            used +=
+                console::measure_text_width(key_desc_separator) + console::measure_text_width(desc);
+            output.push_str(&formats.space.format_string(key_desc_separator));
+            output.push_str(&formats.desc.format_string(desc));
         }
         output.push_str(
             &formats
@@ -677,6 +673,8 @@ fn shows_hints(mode: &InputMode) -> bool {
     )
 }
 
+const MIN_HINT_DESCRIPTION_WIDTH: usize = 4;
+
 #[derive(Clone, Copy)]
 enum HintHeader {
     Full,
@@ -688,7 +686,7 @@ enum HintHeader {
 fn hint_header_layout(
     mode: &str,
     max_pages: usize,
-    minimum_hint_width: usize,
+    hint_sizes: &[(usize, usize)],
     cols: usize,
 ) -> (HintHeader, usize) {
     let full = format!(" {mode} {max_pages}/{max_pages}  Alt+\\ next  ");
@@ -700,7 +698,8 @@ fn hint_header_layout(
         (HintHeader::Page, page),
     ] {
         let width = console::measure_text_width(&header);
-        if width + minimum_hint_width <= cols {
+        let content_width = cols.saturating_sub(width);
+        if minimum_hint_content_width(hint_sizes) <= content_width {
             return (kind, width);
         }
     }
@@ -724,11 +723,30 @@ fn hint_gaps(width: usize) -> (&'static str, &'static str) {
     }
 }
 
+fn minimum_hint_content_width(hint_sizes: &[(usize, usize)]) -> usize {
+    let (key_desc_separator, entry_separator) = hint_gaps(24);
+    let key_desc_width = console::measure_text_width(key_desc_separator);
+    let entry_width = console::measure_text_width(entry_separator);
+    let mut hint_widths = hint_sizes
+        .iter()
+        .map(|(key_width, description_width)| key_width + key_desc_width + description_width)
+        .collect::<Vec<_>>();
+    hint_widths.sort_unstable();
+    match hint_widths.as_slice() {
+        [] => 1,
+        [width] => *width,
+        widths => (widths[0] + widths[1] + entry_width).max(widths[widths.len() - 1]),
+    }
+}
+
 fn hint_pages(
     mode: &InputMode,
     keybinds: &KeybindsVec,
     width: usize,
 ) -> Vec<Vec<(String, String)>> {
+    if width < 3 {
+        return vec![Vec::new()];
+    }
     let mut bindings: Vec<_> = keybinds
         .iter()
         .find(|(input_mode, _)| input_mode == mode)
@@ -743,15 +761,37 @@ fn hint_pages(
     let mut page = Vec::new();
     let mut page_width = 0;
     for (key, actions) in bindings {
-        let key = fit(&key.to_string(), width);
-        let key_width = console::measure_text_width(&key);
-        if !page.is_empty() && page_width + entry_separator_width + key_width > width {
+        let mut key = key.to_string();
+        let mut description = actions_label(actions);
+        let mut entry_width = console::measure_text_width(&key)
+            + key_desc_width
+            + console::measure_text_width(&description);
+        if entry_width > width {
+            let minimum_description_width =
+                console::measure_text_width(&description).clamp(1, MIN_HINT_DESCRIPTION_WIDTH);
+            key = fit(
+                &key,
+                width
+                    .saturating_sub(key_desc_width + minimum_description_width)
+                    .max(1),
+            );
+            description = fit(
+                &description,
+                width
+                    .saturating_sub(console::measure_text_width(&key) + key_desc_width)
+                    .max(1),
+            );
+            entry_width = console::measure_text_width(&key)
+                + key_desc_width
+                + console::measure_text_width(&description);
+        }
+        if !page.is_empty() && page_width + entry_separator_width + entry_width > width {
             pages.push(page);
             page = Vec::new();
             page_width = 0;
         }
-        page_width += usize::from(!page.is_empty()) * entry_separator_width + key_width;
-        page.push((key, actions_label(actions)));
+        page_width += usize::from(!page.is_empty()) * entry_separator_width + entry_width;
+        page.push((key, description));
     }
     if !page.is_empty() {
         pages.push(page);
@@ -759,35 +799,30 @@ fn hint_pages(
     if pages.is_empty() {
         pages.push(Vec::new());
     }
-    for page in &mut pages {
-        let key_width = page
-            .iter()
-            .map(|(key, _)| console::measure_text_width(key))
-            .sum::<usize>()
-            + entry_separator_width * page.len().saturating_sub(1);
-        let description_share = width.saturating_sub(key_width) / page.len().max(1);
-        for (_, description) in page {
-            let description_width = description_share.saturating_sub(key_desc_width);
-            if description_width >= 4 {
-                *description = fit(description, description_width);
-            } else {
-                description.clear();
-            }
-        }
-    }
     pages
 }
 
+fn action_label(action: &Action) -> String {
+    match action {
+        Action::SwitchToMode { input_mode } => format!("{input_mode:?} mode"),
+        action => humanize(&action.to_string()),
+    }
+}
+
 fn actions_label(actions: &[Action]) -> String {
-    actions
+    let labels = actions
         .iter()
         .filter(|action| actions.len() == 1 || !matches!(action, Action::SwitchToMode { .. }))
-        .map(|action| match action {
-            Action::SwitchToMode { input_mode } => format!("{input_mode:?} mode"),
-            action => humanize(&action.to_string()),
-        })
-        .collect::<Vec<_>>()
-        .join(" + ")
+        .map(action_label)
+        .collect::<Vec<_>>();
+    if labels.is_empty() {
+        actions
+            .first()
+            .map(action_label)
+            .unwrap_or_else(|| "Action".to_owned())
+    } else {
+        labels.join(" + ")
+    }
 }
 
 fn humanize(name: &str) -> String {
@@ -1128,7 +1163,7 @@ mod test {
     }
 
     #[test]
-    fn compresses_hints_without_losing_keys() {
+    fn compresses_headers_before_complete_hints() {
         let mode = ModeInfo {
             mode: InputMode::Pane,
             keybinds: vec![(
@@ -1153,23 +1188,127 @@ mod test {
 
         let pages = hint_pages(&mode.mode, &mode.keybinds, 20);
         assert_eq!(
-            pages[0],
+            pages,
             vec![
-                ("a".into(), "Norm…".into()),
-                ("Ctrl b".into(), "Tmux…".into())
+                vec![("a".into(), "Normal mode".into())],
+                vec![("Ctrl b".into(), "Tmux mode".into())],
             ]
         );
         let narrow = hint_pages(&mode.mode, &mode.keybinds, 7);
-        assert_eq!(narrow[0][0].0, "a");
-        assert_eq!(narrow[1][0].0, "Ctrl b");
+        assert_eq!(narrow[0][0], ("a".into(), "Norm…".into()));
+        assert_eq!(narrow[1][0], ("C…".into(), "Tmu…".into()));
+        for width in 3..=30 {
+            let pages = hint_pages(&mode.mode, &mode.keybinds, width);
+            assert!(
+                pages
+                    .iter()
+                    .flatten()
+                    .all(|(key, description)| !key.is_empty() && !description.is_empty()),
+                "incomplete hint at width {width}",
+            );
+            let (key_desc_separator, entry_separator) = hint_gaps(width);
+            for page in pages {
+                let page_width = page
+                    .iter()
+                    .map(|(key, description)| {
+                        console::measure_text_width(key)
+                            + console::measure_text_width(key_desc_separator)
+                            + console::measure_text_width(description)
+                    })
+                    .sum::<usize>()
+                    + console::measure_text_width(entry_separator) * page.len().saturating_sub(1);
+                assert!(page_width <= width, "overflow at width {width}");
+            }
+        }
+        for width in 0..3 {
+            assert_eq!(
+                hint_pages(&mode.mode, &mode.keybinds, width),
+                vec![Vec::new()]
+            );
+        }
+        let unicode_mode = ModeInfo {
+            mode: InputMode::Pane,
+            keybinds: vec![(
+                InputMode::Pane,
+                vec![(
+                    "界".parse().unwrap(),
+                    vec![Action::SwitchToMode {
+                        input_mode: InputMode::Search,
+                    }],
+                )],
+            )],
+            ..ModeInfo::default()
+        };
+        assert_eq!(
+            hint_pages(&unicode_mode.mode, &unicode_mode.keybinds, 14),
+            vec![vec![("界".into(), "Search mode".into())]],
+        );
+        for width in 3..=30 {
+            let pages = hint_pages(&unicode_mode.mode, &unicode_mode.keybinds, width);
+            let (key_desc_separator, entry_separator) = hint_gaps(width);
+            for page in pages {
+                let page_width = page
+                    .iter()
+                    .map(|(key, description)| {
+                        assert!(!key.is_empty() && !description.is_empty());
+                        console::measure_text_width(key)
+                            + console::measure_text_width(key_desc_separator)
+                            + console::measure_text_width(description)
+                    })
+                    .sum::<usize>()
+                    + console::measure_text_width(entry_separator) * page.len().saturating_sub(1);
+                assert!(page_width <= width, "unicode overflow at width {width}");
+            }
+        }
         assert!(matches!(
-            hint_header_layout("PANE", 2, 10, 48).0,
+            hint_header_layout("PANE", 30, &[(1, 11), (6, 9)], 60).0,
             HintHeader::Full
         ));
         assert!(matches!(
-            hint_header_layout("PANE", 2, 10, 15).0,
-            HintHeader::Page
+            hint_header_layout("PANE", 30, &[(1, 11), (6, 9)], 46).0,
+            HintHeader::Compact
         ));
+        let (header, _) = hint_header_layout("PANE", 30, &[(1, 11), (6, 9)], 41);
+        assert!(matches!(header, HintHeader::Page));
+        assert_eq!(format_hint_header(header, "PANE", 1, 30), " 1/30 ");
+        assert!(matches!(
+            hint_header_layout("PANE", 30, &[(1, 11), (6, 9)], 33).0,
+            HintHeader::None
+        ));
+        assert!(matches!(
+            hint_header_layout("PANE", 30, &[(1, 4), (1, 4), (30, 4)], 36).0,
+            HintHeader::None
+        ));
+        let mut previous_header = 0;
+        for cols in 0..=80 {
+            let header = hint_header_layout("PANE", 30, &[(1, 9), (1, 9)], cols).0;
+            let header_rank = match header {
+                HintHeader::None => 0,
+                HintHeader::Page => 1,
+                HintHeader::Compact => 2,
+                HintHeader::Full => 3,
+            };
+            assert!(
+                header_rank >= previous_header,
+                "header regressed at width {cols}",
+            );
+            previous_header = header_rank;
+        }
+        let mut state = State {
+            keybinds: mode.keybinds.clone(),
+            hint_visible: true,
+            hint_formats: Some(HintFormats::new(&BTreeMap::new())),
+            ..State::default()
+        };
+        state.state.mode = mode;
+        for cols in 0..=80 {
+            state.hint_page = 0;
+            let line = state.hint_line(cols);
+            assert!(
+                console::measure_text_width(&line) <= cols,
+                "rendered line overflow at width {cols}",
+            );
+        }
     }
 
     struct TestCommands(BTreeMap<String, String>);
