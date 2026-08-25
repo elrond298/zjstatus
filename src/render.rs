@@ -186,7 +186,17 @@ impl FormattedPart {
         widgets: &BTreeMap<String, Arc<dyn Widget>>,
         state: &ZellijState,
     ) -> String {
-        let skip_cache = self.cache_mask & UpdateEventMask::Always as u8 != 0;
+        self.format_string_with_widgets_at_level(widgets, state, 0)
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub fn format_string_with_widgets_at_level(
+        &mut self,
+        widgets: &BTreeMap<String, Arc<dyn Widget>>,
+        state: &ZellijState,
+        level: usize,
+    ) -> String {
+        let skip_cache = level != 0 || self.cache_mask & UpdateEventMask::Always as u8 != 0;
 
         if !skip_cache && self.cache_mask & state.cache_mask == 0 && !self.cache.is_empty() {
             tracing::debug!(msg = "hit", typ = "format_string", format = self.content);
@@ -211,7 +221,8 @@ impl FormattedPart {
 
             let widget_mask = event_mask_from_widget_name(widget_key_name);
             let skip_widget_cache = widget_mask & UpdateEventMask::Always as u8 != 0;
-            if !skip_widget_cache
+            if level == 0
+                && !skip_widget_cache
                 && widget_mask & state.cache_mask == 0
                 && let Some(res) = self.cache.get(widget_key)
             {
@@ -229,17 +240,21 @@ impl FormattedPart {
             );
 
             let result = match widgets.get(widget_key_name) {
-                Some(widget) => widget.process(widget_key, state),
+                Some(widget) => widget.process_at_level(widget_key, state, level),
                 None => "Use of uninitialized widget".to_owned(),
             };
 
-            self.cache.insert(widget_key.to_owned(), result.to_owned());
+            if level == 0 {
+                self.cache.insert(widget_key.to_owned(), result.to_owned());
+            }
 
             output = output.replace(match_name, &result);
         }
 
         let res = self.format_string(&output);
-        self.cached_content.clone_from(&res);
+        if level == 0 {
+            self.cached_content.clone_from(&res);
+        }
 
         res
     }
