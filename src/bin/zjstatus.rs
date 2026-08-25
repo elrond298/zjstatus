@@ -489,7 +489,6 @@ impl State {
     fn invalidate_focus_cwd_commands(&mut self) {
         for name in &self.focus_cwd_commands {
             pipe::invalidate_command_result(&mut self.state, name);
-            zjstatus::widgets::command::release_command_lock(&self.state, name);
         }
     }
 
@@ -582,6 +581,15 @@ impl State {
                 self.state.cache_mask = UpdateEventMask::Command as u8;
 
                 if let Some(name) = context.get("name") {
+                    let Some(run_id) = context.get("run_id") else {
+                        tracing::debug!("discarding command result without run id for {name}");
+                        return false;
+                    };
+                    if !zjstatus::widgets::command::release_command_lock(&self.state, name, run_id)
+                    {
+                        tracing::debug!("discarding superseded command result for {name}");
+                        return false;
+                    }
                     if self.focus_cwd_commands.iter().any(|n| n == name)
                         && context.get("cwd").map(PathBuf::from) != self.state.focused_pane_cwd
                     {
