@@ -71,6 +71,14 @@ Please ensure, that the configuration is correct.
 Sometimes, especially when updating plugins, it might come to caching issues, which can be resolved by clearing it. Please keep in
 mind, that it will also clear the cache for running sessions and revokes granted permissions for plugins.
 
+To build this fork and install `zjstatus.wasm` plus its responsive status scripts under `~/.config/zellij`:
+
+```sh
+./install.sh
+```
+
+The destination is `$ZELLIJ_CONFIG_DIR` when set, otherwise `$XDG_CONFIG_HOME/zellij`, falling back to `~/.config/zellij`. When using a non-default directory, point the `command_*_command` paths in your layout to its `scripts` directory.
+
 ## ❄️ Installation with nix flake
 
 Add this repository to your inputs and then with the following overlay to your packages.
