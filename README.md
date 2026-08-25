@@ -146,7 +146,7 @@ keybinds {
 
 ### Responsive command row
 
-The idle hint row can be composed from arbitrary command widgets. Each command prints one display variant per line, widest first. Print `@hide` as a variant to hide that item. Lower reduction priorities are applied first across all items.
+The idle hint row can be composed directly from arbitrary `command_<name>_*` widgets. List each command name in `hint_idle_left` or `hint_idle_right`; there is no intermediate alias. Each command prints one display variant per line, widest first, and a line containing exactly `@hide` hides it.
 
 The Pi example reuses `extensions/zellij-status.ts` from the `zellij-pi-dashboard` repository; zjstatus only reads its status files through [`examples/pi-status.sh`](examples/pi-status.sh). Link that extension into Pi, then restart Pi:
 
@@ -154,27 +154,22 @@ The Pi example reuses `extensions/zellij-status.ts` from the `zellij-pi-dashboar
 ln -sfn /path/to/zellij-pi-dashboard/extensions/zellij-status.ts ~/.pi/agent/extensions/zellij-status.ts
 ```
 
-```javascript
-hint_idle_left              "vcs pi"
-hint_idle_right             "load"
-hint_idle_separator         "#[bg=$panel]  "
-hint_idle_vcs_command       "vcs"
-hint_idle_vcs_reductions    "0 4 5 6"
-hint_idle_load_command      "load"
-hint_idle_load_reductions   "1 2 3"
-hint_idle_pi_command        "pi"
-hint_idle_pi_reductions     "7 8 9"
+```kdl
+hint_idle_left         "vcs pi"
+hint_idle_right        "load"
+hint_idle_separator    "#[bg=$panel]  "
+hint_idle_shrink_order "vcs pi pi pi pi load load load vcs vcs vcs pi pi pi"
 
-command_vcs_command         "sh -c '$HOME/.config/zellij/scripts/vcs-status.sh'"
-command_vcs_cwd             "{focused_pane_cwd}"
-command_vcs_rendermode      "raw"
-command_vcs_interval        "2"
-command_pi_command          "sh -c '$HOME/.config/zellij/scripts/pi-status.sh'"
-command_pi_rendermode       "raw"
-command_pi_interval         "2"
-command_load_command        "sh -c '$HOME/.config/zellij/scripts/host-load.sh'"
-command_load_rendermode     "raw"
-command_load_interval       "2"
+command_vcs_command    "sh -c '$HOME/.config/zellij/scripts/vcs-status.sh'"
+command_vcs_cwd        "{focused_pane_cwd}"
+command_vcs_rendermode "raw"
+command_vcs_interval   "2"
+command_pi_command     "sh -c '$HOME/.config/zellij/scripts/pi-status.sh'"
+command_pi_rendermode  "raw"
+command_pi_interval    "2"
+command_load_command   "sh -c '$HOME/.config/zellij/scripts/host-load.sh'"
+command_load_rendermode "raw"
+command_load_interval  "2"
 ```
 
 For example, a command with four visible levels and a hidden level prints:
@@ -187,7 +182,13 @@ idle status
 @hide
 ```
 
-Each item's reduction list has one priority per transition between output lines. Priorities for an item must be strictly increasing. The example therefore reduces VCS once, then Load three times, VCS three more times, and finally Pi. Missing levels and blank lines repeat the last valid level; extra levels are ignored; a level that would grow wider keeps the prior level. Only a line containing exactly `@hide` hides the item. `hint_idle_format` and `hint_idle_right_format` remain available as non-responsive fallbacks.
+Read `hint_idle_shrink_order` from left to right. Every occurrence of a name advances that command to its next output line. The example compacts VCS once, progressively truncates Pi goal/todo details four times, removes Load and the remaining VCS detail, then reduces Pi to progress, state, and aggregate forms. This prevents a long Pi detail from evicting stable VCS/Load information before trying shorter text. When the row is too wide, zjstatus follows this sequence until it fits.
+
+[`pi-status.sh`](examples/pi-status.sh) emits full details followed by grapheme-safe 64-, 40-, 24-, and 12-terminal-column detail limits. Only after 12 columns becomes too short does it remove goal/active-todo text, while preserving todo progress, then Pi state, then the aggregate count. The dashboard producer asynchronously summarizes goals wider than 48 terminal columns to at most 48 columns; shorter goals stay verbatim, and the script still truncates raw goals while summarization is pending or unavailable.
+
+Missing and blank output lines inherit the previous valid level; lines beyond the number of configured transitions are ignored; a level that would grow wider keeps the prior level. Commands omitted from the shrink order remain at their first variant. Names must refer directly to configured `command_<name>_command` widgets, and one command cannot appear on both sides.
+
+This is a breaking configuration change. The former `hint_idle_<item>_command` aliases and `hint_idle_<item>_reductions` numeric priorities are rejected; replace them with direct command names and the single readable `hint_idle_shrink_order`. `hint_idle_format` and `hint_idle_right_format` remain available as non-responsive fallbacks.
 
 ### Nonblocking command execution
 
@@ -195,35 +196,32 @@ Command widgets are submitted through Zellij's background command API. Each widg
 
 ### Responsive main status line
 
-The original left/center/right status line can also reduce by width. Add numbered formats; omitted levels inherit the previous format. Reduction happens in rounds: every region reaches level 1 before any region reaches level 2. Within a round, the rightmost region in `format_precedence` reduces first.
+The original left/center/right status line uses named shrink levels. `format_shrink_levels` enables responsive rendering and defines the levels from richest to smallest; omitted region formats inherit the previous level, while an explicitly empty format hides that region. `format_shrink_order` says which region shrinks first within each synchronized round.
 
 ```kdl
-format_responsive "true"
-format_precedence "lrc"
+format_shrink_levels "compact minimal locator tiny"
+format_shrink_order  "right center left"
 
-format_left   "{mode} {session} {swap_layout}"
-format_left_1 "{mode} {session}"
-format_left_2 "{mode}"
-format_left_3 ""
-format_left_4 ""
+format_left         "{mode} {session} {swap_layout}"
+format_left_compact "{mode} {session}"
+format_left_minimal "{mode}"
+format_left_locator ""
 
-format_center   "{tabs}"
-format_center_1 "{tabs}"
-format_center_2 "{tabs}"
-format_center_3 "{tabs}"
-format_center_4 "{tabs}"
+format_center "{tabs}"
 
-format_right   "{notifications}{command_hostname}{datetime}"
-format_right_1 "{notifications}{command_hostname}"
-format_right_2 "{notifications}"
-format_right_3 "{notifications}"
-format_right_4 "{notifications}"
+format_right         "{notifications}{command_hostname}{datetime}"
+format_right_compact "{notifications}{command_hostname}"
+format_right_minimal "{notifications}"
 
 tab_locator_format         "{left_arrow}{index}{right_arrow}"
 tab_locator_compact_format "{index}"
 ```
 
-At levels 1 and 2, `{tabs}` automatically reduces to nearby tabs and then the active tab. Levels 3 and 4 render the active position as `&lt;- 3 -&gt;` and `3`. A current notification survives every configured right-side level. If the minimum layout still does not fit, zjstatus keeps the active tab position and gives the remaining width to the notification; only then is the notification truncated.
+Read the levels left to right: `full -> compact -> minimal -> locator -> tiny`. Within each round the example shrinks right, then center, then left; all three regions complete `compact` before any can enter `minimal`. A missing `format_<region>_<level>` inherits that region's prior format, so `{tabs}` need only be written once.
+
+The tabs widget uses the level position automatically: full tabs, nearby tabs, active tab, `<- N ->`, then `N`. A current notification survives every configured level. If the minimum layout still does not fit, zjstatus keeps the active-tab position and gives the remaining width to the notification; only then is the notification truncated.
+
+This is a breaking configuration change. `format_responsive`, `format_precedence`, and numeric keys such as `format_left_1` are rejected. Define semantic names once in `format_shrink_levels`, use matching `format_left_<name>`, `format_center_<name>`, and `format_right_<name>` keys, and spell out the readable region order in `format_shrink_order`.
 
 ## 🏎️ Quick Start for zjstatus
 
