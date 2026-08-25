@@ -254,11 +254,11 @@ impl ZellijPlugin for State {
 
         tracing::debug!("{:?}", self.state.mode.session_name);
 
-        let hint = self.hint_line(cols);
-        let output = self
-            .module_config
-            .render_bar(self.state.clone(), self.widget_map.clone());
-
+        let hint = scrub_markers(self.hint_line(cols));
+        let output = scrub_change_markers(
+            self.module_config
+                .render_bar(self.state.clone(), self.widget_map.clone()),
+        );
         if self.module_config.border.enabled
             && matches!(self.module_config.border.position, BorderPosition::Top)
             && let Some((border, status)) = output.split_once('\n')
@@ -352,54 +352,22 @@ impl State {
     }
 
     fn idle_line(&mut self, cols: usize) -> String {
-        let mut left = self
+        let left = self
             .hint_idle_parts
             .iter_mut()
             .fold(String::new(), |output, part| {
                 output + &part.format_string_with_widgets(&self.widget_map, &self.state)
             });
-        let mut right = self
+        let right = self
             .hint_idle_right_parts
             .iter_mut()
             .fold(String::new(), |output, part| {
                 output + &part.format_string_with_widgets(&self.widget_map, &self.state)
             });
-        let full_left = pi_left_variant(&left, true, true);
-        let without_tool = pi_left_variant(&left, true, false);
-        let compact_left = pi_left_variant(&left, false, false);
-        left = full_left;
+        let (left, right) = fit_idle_status(&left, &right, cols);
         let Some(formats) = &self.hint_formats else {
             return left + &right;
         };
-        let mut left_width = console::measure_text_width(&left);
-        let mut right_width = console::measure_text_width(&right);
-        if left_width + right_width > cols {
-            left = without_tool;
-            left_width = console::measure_text_width(&left);
-        }
-        if left_width + right_width > cols {
-            for _ in 0..2 {
-                let reduced = drop_last_right_block(right.clone());
-                if reduced == right {
-                    break;
-                }
-                right = reduced;
-                right_width = console::measure_text_width(&right);
-                if left_width + right_width <= cols {
-                    break;
-                }
-            }
-        }
-        if left_width + right_width > cols {
-            left = compact_left;
-            left_width = console::measure_text_width(&left);
-        }
-        if left_width + right_width > cols {
-            let right_reserve = right_width.min(cols / 3);
-            left = console::truncate_str(&left, cols - right_reserve, "…").into_owned();
-            left_width = console::measure_text_width(&left);
-            right = fit_right_blocks(right, cols.saturating_sub(left_width));
-        }
         let gap = cols.saturating_sub(
             console::measure_text_width(&left) + console::measure_text_width(&right),
         );
@@ -732,54 +700,246 @@ fn humanize(name: &str) -> String {
     output
 }
 
-const OPTIONAL_TODO_START: char = '\u{e000}';
-const OPTIONAL_TODO_END: char = '\u{e001}';
-const OPTIONAL_TOOL_START: char = '\u{e002}';
-const OPTIONAL_TOOL_END: char = '\u{e003}';
+const PI_DETAIL_START: char = '\u{fe00}';
+const PI_DETAIL_END: char = '\u{fe01}';
+const VCS_START: char = '\u{fe02}';
+const VCS_END: char = '\u{fe03}';
+const VCS_DESC_START: char = '\u{fe04}';
+const VCS_DESC_END: char = '\u{fe05}';
+const VCS_CHANGES_START: char = '\u{e0100}';
+const VCS_CHANGES_END: char = '\u{e0101}';
+const PI_PROGRESS_START: char = '\u{fe06}';
+const PI_PROGRESS_END: char = '\u{fe07}';
+const PI_FULL_START: char = '\u{fe08}';
+const PI_FULL_END: char = '\u{fe09}';
+const PI_AGGREGATE_START: char = '\u{fe0a}';
+const PI_AGGREGATE_END: char = '\u{fe0b}';
+const METRIC_HISTORY_START: char = '\u{fe0c}';
+const METRIC_HISTORY_END: char = '\u{fe0d}';
+const METRIC_IO_START: char = '\u{fe0e}';
+const METRIC_IO_END: char = '\u{fe0f}';
 
-fn optional_section(text: &str, start: char, end: char, keep: bool) -> String {
-    let mut inside = false;
-    text.chars()
-        .filter(|character| match *character {
-            character if character == start => {
-                inside = true;
-                false
-            }
-            character if character == end => {
-                inside = false;
-                false
-            }
-            _ => keep || !inside,
-        })
-        .collect()
+#[derive(Clone, Copy)]
+enum VcsLevel {
+    Full,
+    Compact,
+    NoChanges,
+    Hidden,
 }
 
-fn pi_left_variant(text: &str, keep_todo: bool, keep_tool: bool) -> String {
-    let text = optional_section(text, OPTIONAL_TOOL_START, OPTIONAL_TOOL_END, keep_tool);
-    optional_section(&text, OPTIONAL_TODO_START, OPTIONAL_TODO_END, keep_todo)
+#[derive(Clone, Copy)]
+enum PiLevel {
+    Full,
+    Progress,
+    State,
+    Aggregate,
 }
 
-fn drop_last_right_block(mut text: String) -> String {
-    let ends: Vec<_> = text.match_indices(' ').map(|(index, _)| index).collect();
-    if ends.len() < 2 {
+#[derive(Clone, Copy)]
+enum LoadLevel {
+    Full,
+    NoHistory,
+    LoadOnly,
+    Hidden,
+}
+
+fn map_sections(text: &str, start: char, end: char, mut map: impl FnMut(&str) -> String) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start_index) = rest.find(start) {
+        output.push_str(&rest[..start_index]);
+        let section = &rest[start_index + start.len_utf8()..];
+        let Some(end_index) = section.find(end) else {
+            output.push_str(section);
+            return output;
+        };
+        output.push_str(&map(&section[..end_index]));
+        rest = &section[end_index + end.len_utf8()..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn optional_sections(text: &str, start: char, end: char, keep: bool) -> String {
+    map_sections(text, start, end, |section| {
+        if keep {
+            section.to_owned()
+        } else {
+            String::new()
+        }
+    })
+}
+
+fn semantic_prefix(description: &str) -> &str {
+    let word = description.split_whitespace().next().unwrap_or_default();
+    let end = word.find(['(', ':', '!']).unwrap_or(word.len());
+    if end == 0 { word } else { &word[..end] }
+}
+
+fn vcs_description(text: &str, level: VcsLevel, max_width: Option<usize>) -> String {
+    map_sections(
+        text,
+        VCS_DESC_START,
+        VCS_DESC_END,
+        |description| match level {
+            VcsLevel::Compact | VcsLevel::NoChanges => semantic_prefix(description).to_owned(),
+            VcsLevel::Full => max_width.map_or_else(
+                || description.to_owned(),
+                |width| console::truncate_str(description, width, "…").into_owned(),
+            ),
+            VcsLevel::Hidden => String::new(),
+        },
+    )
+}
+
+fn left_variant(
+    text: &str,
+    vcs_level: VcsLevel,
+    pi_level: PiLevel,
+    vcs_desc_width: Option<usize>,
+) -> String {
+    let text = vcs_description(text, vcs_level, vcs_desc_width);
+    let text = optional_sections(
+        &text,
+        VCS_CHANGES_START,
+        VCS_CHANGES_END,
+        matches!(vcs_level, VcsLevel::Full | VcsLevel::Compact),
+    );
+    let text = optional_sections(
+        &text,
+        VCS_START,
+        VCS_END,
+        !matches!(vcs_level, VcsLevel::Hidden),
+    );
+    let text = optional_sections(
+        &text,
+        PI_FULL_START,
+        PI_FULL_END,
+        !matches!(pi_level, PiLevel::Aggregate),
+    );
+    let text = optional_sections(
+        &text,
+        PI_AGGREGATE_START,
+        PI_AGGREGATE_END,
+        matches!(pi_level, PiLevel::Aggregate),
+    );
+    let keep_details = matches!(pi_level, PiLevel::Full);
+    let text = optional_sections(&text, PI_DETAIL_START, PI_DETAIL_END, keep_details);
+    optional_sections(
+        &text,
+        PI_PROGRESS_START,
+        PI_PROGRESS_END,
+        matches!(pi_level, PiLevel::Full | PiLevel::Progress),
+    )
+}
+
+fn right_variant(text: &str, level: LoadLevel) -> String {
+    if matches!(level, LoadLevel::Hidden) {
         return String::new();
     }
-    text.truncate(ends[ends.len() - 2] + ' '.len_utf8());
+    let text = optional_sections(
+        text,
+        METRIC_HISTORY_START,
+        METRIC_HISTORY_END,
+        matches!(level, LoadLevel::Full),
+    );
+    optional_sections(
+        &text,
+        METRIC_IO_START,
+        METRIC_IO_END,
+        matches!(level, LoadLevel::Full | LoadLevel::NoHistory),
+    )
+}
+
+fn status_fits(left: &str, right: &str, cols: usize) -> bool {
+    console::measure_text_width(left) + console::measure_text_width(right) <= cols
+}
+
+fn section_width(text: &str, start: char, end: char) -> usize {
+    let mut width = 0;
+    map_sections(text, start, end, |section| {
+        width += console::measure_text_width(section);
+        String::new()
+    });
+    width
+}
+
+fn is_change_marker(character: char) -> bool {
+    matches!(character, '\u{e0100}'..='\u{e01ef}')
+}
+
+fn is_reserved_marker(character: char) -> bool {
+    matches!(character, '\u{e000}'..='\u{e013}' | '\u{fe00}'..='\u{fe0f}')
+        || is_change_marker(character)
+}
+
+fn scrub_change_markers(mut text: String) -> String {
+    text.retain(|character| !is_change_marker(character));
     text
 }
 
-fn fit_right_blocks(mut text: String, max_width: usize) -> String {
-    while console::measure_text_width(&text) > max_width {
-        let ends: Vec<_> = text.match_indices(' ').map(|(index, _)| index).collect();
-        match ends.len() {
-            0 => return String::new(),
-            3.. => text.truncate(ends[ends.len() - 2] + ' '.len_utf8()),
-            _ => {
-                text.drain(..ends[0] + ' '.len_utf8());
-            }
+fn scrub_markers(mut text: String) -> String {
+    text.retain(|character| !is_reserved_marker(character));
+    text
+}
+
+fn status_pair(left: String, right: String) -> (String, String) {
+    (scrub_markers(left), scrub_markers(right))
+}
+
+fn fit_idle_status(left: &str, right: &str, cols: usize) -> (String, String) {
+    let full_left = left_variant(left, VcsLevel::Full, PiLevel::Full, None);
+    let full_right = right_variant(right, LoadLevel::Full);
+    if status_fits(&full_left, &full_right, cols) {
+        return status_pair(full_left, full_right);
+    }
+
+    let description_width = section_width(left, VCS_DESC_START, VCS_DESC_END);
+    let mut compact_width = 0;
+    drop(map_sections(
+        left,
+        VCS_DESC_START,
+        VCS_DESC_END,
+        |description| {
+            compact_width += console::measure_text_width(semantic_prefix(description));
+            String::new()
+        },
+    ));
+    let overflow = console::measure_text_width(&full_left)
+        .saturating_add(console::measure_text_width(&full_right))
+        .saturating_sub(cols);
+    let truncated_width = description_width.saturating_sub(overflow);
+    if truncated_width > compact_width {
+        let truncated = left_variant(left, VcsLevel::Full, PiLevel::Full, Some(truncated_width));
+        if status_fits(&truncated, &full_right, cols) {
+            return status_pair(truncated, full_right);
         }
     }
-    text
+
+    let levels = [
+        (VcsLevel::Compact, PiLevel::Full, LoadLevel::Full),
+        (VcsLevel::Compact, PiLevel::Full, LoadLevel::NoHistory),
+        (VcsLevel::Compact, PiLevel::Full, LoadLevel::LoadOnly),
+        (VcsLevel::Compact, PiLevel::Full, LoadLevel::Hidden),
+        (VcsLevel::NoChanges, PiLevel::Full, LoadLevel::Hidden),
+        (VcsLevel::Hidden, PiLevel::Full, LoadLevel::Hidden),
+        (VcsLevel::Hidden, PiLevel::Progress, LoadLevel::Hidden),
+        (VcsLevel::Hidden, PiLevel::State, LoadLevel::Hidden),
+        (VcsLevel::Hidden, PiLevel::Aggregate, LoadLevel::Hidden),
+    ];
+    for (vcs_level, pi_level, load_level) in levels {
+        let left = left_variant(left, vcs_level, pi_level, None);
+        let right = right_variant(right, load_level);
+        if status_fits(&left, &right, cols) {
+            return status_pair(left, right);
+        }
+    }
+
+    let aggregate = left_variant(left, VcsLevel::Hidden, PiLevel::Aggregate, None);
+    status_pair(
+        console::truncate_str(&aggregate, cols, "…").into_owned(),
+        String::new(),
+    )
 }
 
 fn fit(text: &str, width: usize) -> String {
@@ -896,36 +1056,138 @@ mod test {
     }
 
     #[test]
-    fn idle_row_optional_details_have_full_and_compact_forms() {
-        let text = format!(
-            "π 2/3{OPTIONAL_TODO_START} working on a long task{OPTIONAL_TODO_END}{OPTIONAL_TOOL_START} bash{OPTIONAL_TOOL_END}",
+    fn status_variants_reduce_vcs_pi_and_load_sections() {
+        let left = format!(
+            "{VCS_START} main @- {VCS_DESC_START}feat(status): improve{VCS_DESC_END}\
+             {VCS_CHANGES_START}  +2 -1{VCS_CHANGES_END}  {VCS_END}\
+             {PI_FULL_START}π [debug] ●{PI_PROGRESS_START} 1/3{PI_DETAIL_START} ▶ task{PI_DETAIL_END}{PI_PROGRESS_END}\
+             {PI_DETAIL_START} bash{PI_DETAIL_END}{PI_FULL_END}\
+             {PI_AGGREGATE_START}π2 ●1 ○1{PI_AGGREGATE_END}",
         );
         assert_eq!(
-            pi_left_variant(&text, true, true),
-            "π 2/3 working on a long task bash"
+            left_variant(&left, VcsLevel::Full, PiLevel::Full, None),
+            " main @- feat(status): improve  +2 -1  π [debug] ● 1/3 ▶ task bash"
         );
         assert_eq!(
-            pi_left_variant(&text, true, false),
-            "π 2/3 working on a long task"
+            left_variant(&left, VcsLevel::Compact, PiLevel::Progress, None),
+            " main @- feat  +2 -1  π [debug] ● 1/3"
         );
-        assert_eq!(pi_left_variant(&text, false, false), "π 2/3");
+        assert_eq!(
+            left_variant(&left, VcsLevel::NoChanges, PiLevel::Progress, None),
+            " main @- feat  π [debug] ● 1/3"
+        );
+        assert_eq!(
+            left_variant(&left, VcsLevel::Hidden, PiLevel::State, None),
+            "π [debug] ●"
+        );
+        assert_eq!(
+            left_variant(&left, VcsLevel::Hidden, PiLevel::Aggregate, None),
+            "π2 ●1 ○1"
+        );
+
+        let right = format!(
+            "{METRIC_IO_START}D{METRIC_HISTORY_START}h{METRIC_HISTORY_END} \
+             N{METRIC_HISTORY_START}h{METRIC_HISTORY_END} {METRIC_IO_END}\
+             L {METRIC_HISTORY_START}H {METRIC_HISTORY_END}",
+        );
+        assert_eq!(right_variant(&right, LoadLevel::Full), "Dh Nh L H ");
+        assert_eq!(right_variant(&right, LoadLevel::NoHistory), "D N L ");
+        assert_eq!(right_variant(&right, LoadLevel::LoadOnly), "L ");
+        assert_eq!(right_variant(&right, LoadLevel::Hidden), "");
     }
 
     #[test]
-    fn narrow_idle_rows_truncate_left_and_keep_right_blocks() {
-        assert_eq!(
-            console::truncate_str("branch commit message", 12, "…"),
-            "branch comm…"
+    fn idle_status_truncates_commit_before_reducing_groups() {
+        let left = format!(
+            "{VCS_START}@- {VCS_DESC_START}feat(status): improve responsive rendering{VCS_DESC_END}  {VCS_END}\
+             {PI_FULL_START}π [debug] ●{PI_FULL_END}{PI_AGGREGATE_START}π ●{PI_AGGREGATE_END}",
         );
-        let metrics = "D N L H ".to_owned();
-        assert_eq!(drop_last_right_block(metrics.clone()), "D N L ");
-        assert_eq!(
-            drop_last_right_block(drop_last_right_block(metrics.clone())),
-            "D N "
+        let full = left_variant(&left, VcsLevel::Full, PiLevel::Full, None);
+        let cols = console::measure_text_width(&full) + 1 - 8;
+        let (fitted_left, fitted_right) = fit_idle_status(&left, "R", cols);
+        assert_eq!(fitted_right, "R");
+        assert!(fitted_left.contains("@- feat(status):"));
+        assert!(fitted_left.contains('…'));
+        assert!(fitted_left.ends_with("π [debug] ●"));
+    }
+
+    #[test]
+    fn idle_status_reduces_load_then_vcs_then_pi() {
+        let left = format!(
+            "{VCS_START}V {VCS_DESC_START}feat{VCS_DESC_END}{VCS_CHANGES_START} C{VCS_CHANGES_END} {VCS_END}\
+             {PI_FULL_START}PI{PI_PROGRESS_START} 1/3{PI_DETAIL_START} task{PI_DETAIL_END}{PI_PROGRESS_END}\
+             {PI_DETAIL_START} tool{PI_DETAIL_END}{PI_FULL_END}\
+             {PI_AGGREGATE_START}A{PI_AGGREGATE_END}",
         );
-        assert_eq!(fit_right_blocks(metrics.clone(), 6), "D N L ");
-        assert_eq!(fit_right_blocks(metrics.clone(), 4), "D N ");
-        assert_eq!(fit_right_blocks(metrics, 2), "N ");
-        assert_eq!(fit_right_blocks("plain".to_owned(), 4), "");
+        let right = format!(
+            "{METRIC_IO_START}D{METRIC_HISTORY_START}h{METRIC_HISTORY_END}\
+             N{METRIC_HISTORY_START}h{METRIC_HISTORY_END}{METRIC_IO_END}\
+             L{METRIC_HISTORY_START}H{METRIC_HISTORY_END}",
+        );
+        let width = |left: &str, right: &str| {
+            console::measure_text_width(left) + console::measure_text_width(right)
+        };
+        let compact = left_variant(&left, VcsLevel::Compact, PiLevel::Full, None);
+        let no_history = right_variant(&right, LoadLevel::NoHistory);
+        assert_eq!(
+            fit_idle_status(&left, &right, width(&compact, &no_history)),
+            (compact.clone(), no_history)
+        );
+
+        let load_only = right_variant(&right, LoadLevel::LoadOnly);
+        assert_eq!(
+            fit_idle_status(&left, &right, width(&compact, &load_only)),
+            (compact.clone(), load_only)
+        );
+        assert_eq!(
+            fit_idle_status(&left, &right, width(&compact, "")),
+            (compact, String::new())
+        );
+
+        let no_changes = left_variant(&left, VcsLevel::NoChanges, PiLevel::Full, None);
+        assert_eq!(
+            fit_idle_status(&left, &right, width(&no_changes, "")),
+            (no_changes, String::new())
+        );
+
+        let pi_full = left_variant(&left, VcsLevel::Hidden, PiLevel::Full, None);
+        assert_eq!(
+            fit_idle_status(&left, &right, width(&pi_full, "")),
+            (pi_full, String::new())
+        );
+        let pi_progress = left_variant(&left, VcsLevel::Hidden, PiLevel::Progress, None);
+        assert_eq!(
+            fit_idle_status(&left, &right, width(&pi_progress, "")),
+            (pi_progress, String::new())
+        );
+        let pi_state = left_variant(&left, VcsLevel::Hidden, PiLevel::State, None);
+        assert_eq!(
+            fit_idle_status(&left, &right, width(&pi_state, "")),
+            (pi_state, String::new())
+        );
+        assert_eq!(
+            fit_idle_status(&left, &right, 1),
+            ("A".to_owned(), String::new())
+        );
+    }
+
+    #[test]
+    fn compact_commit_description_keeps_semantic_prefix() {
+        assert_eq!(semantic_prefix("feat(status): improve"), "feat");
+        assert_eq!(semantic_prefix("fix!: break API"), "fix");
+        assert_eq!(semantic_prefix("修复 状态栏"), "修复");
+    }
+
+    #[test]
+    fn final_status_scrubs_injected_and_malformed_markers() {
+        let left = format!("safe{VCS_END}\u{e010}\u{e0102}{PI_DETAIL_START}detail");
+        let right = format!("right{METRIC_HISTORY_END}\u{e000}");
+        let (left, right) = fit_idle_status(&left, &right, usize::MAX);
+        assert_eq!(left, "safedetail");
+        assert_eq!(right, "right");
+        assert!(!left.chars().chain(right.chars()).any(is_reserved_marker));
+
+        let ordinary = format!("☀\u{fe0f}\u{e000}\u{e0100}");
+        assert_eq!(scrub_change_markers(ordinary), format!("☀\u{fe0f}\u{e000}"));
     }
 }

@@ -15,6 +15,10 @@ runtime=${XDG_RUNTIME_DIR:-/tmp}/zjstatus-metrics-$(id -u)
 session=session-$(printf '%s' "${ZELLIJ_SESSION_NAME:-default}" | sed 's/[^A-Za-z0-9_.-]/_/g')
 state=$runtime/$session
 panel=\$panel
+history_start=$(printf '\357\270\214')
+history_end=$(printf '\357\270\215')
+io_start=$(printf '\357\270\216')
+io_end=$(printf '\357\270\217')
 mkdir -p "$runtime" 2>/dev/null || exit 0
 chmod 700 "$runtime" 2>/dev/null || exit 0
 
@@ -149,7 +153,11 @@ block() {
 }
 
 load_label=$(awk -v value="$load" 'BEGIN { if (value > 999.9) value = 999.9; printf "%5.1f", value }')
-block '#C6A0F6' "󰋊 $(rate "$disk_rate")/s $(braille "$disk_graph" "$disk_scale")"
-block '#8AADF4' "󰖩 $(rate "$net_rate")/s $(braille "$net_graph" "$net_scale")"
+printf '%s' "$io_start"
+block '#C6A0F6' "󰋊 $(rate "$disk_rate")/s$history_start $(braille "$disk_graph" "$disk_scale")$history_end"
+block '#8AADF4' "󰖩 $(rate "$net_rate")/s$history_start $(braille "$net_graph" "$net_scale")$history_end"
+printf '%s' "$io_end"
 block '#EED49F' " $load_label"
+printf '%s' "$history_start"
 block '#EED49F' "$(braille "$load_graph" "$load_scale")"
+printf '%s' "$history_end"
