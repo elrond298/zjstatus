@@ -23,6 +23,12 @@
 
 ![Screenshot of the statusbar](./assets/demo.png)
 
+## Focus of this fork
+
+- **Contextual key hints:** a second row shows keybindings for supported Zellij modes after a short idle delay, then dismisses on input. Hints paginate as complete key-description pairs.
+- **Adaptive, progressive width reduction:** key hints, command status, tabs, and the original main bar reduce in coordinated levels before any essential text is truncated.
+- **Nonblocking commands:** status scripts run through Zellij's background command API with at most one process per widget; slow or hung scripts keep the last completed value instead of blocking Zellij or Pi or spawning overlapping copies.
+
 ### [👉 Check out and share your awesome configs in the community showcase!](https://github.com/dj95/zjstatus/discussions/44)
 
 <details>
@@ -113,6 +119,31 @@ is also available in case you only want to use *zjframes*.
 
 For configuring, please follow the [documentation](https://github.com/dj95/zjstatus/wiki/3-%E2%80%90-Configuration).
 
+### Contextual key hints
+
+Give a borderless zjstatus pane two rows (`size=2`). The upper row reads Zellij's `InitialKeybinds` data and, after 500 ms of idle time in Pane, Resize, Tab, Scroll, Search, Session, Move, or Tmux mode, shows that mode's available keys. Input dismisses the one-shot hint; when hints are absent, the same row displays the responsive command status described below.
+
+```kdl
+hint_mode_format  "#[fg=blue,bold]"
+hint_key_format   "#[fg=yellow,bold]"
+hint_desc_format  "#[fg=white]"
+hint_space_format ""
+```
+
+Hints reduce their header first, then paginate fewer complete `key + description` pairs. A description stays complete whenever that pair fits by itself and is truncated only when the individual pair exceeds the whole row. Bind a key to cycle pages without focusing or intercepting normal pane input:
+
+```kdl
+keybinds {
+    shared {
+        bind "Alt \\" {
+            MessagePluginId {
+                name "key-hints-next-page"
+            }
+        }
+    }
+}
+```
+
 ### Responsive command row
 
 The idle hint row can be composed from arbitrary command widgets. Each command prints one display variant per line, widest first. Print `@hide` as a variant to hide that item. Lower reduction priorities are applied first across all items.
@@ -158,6 +189,10 @@ idle status
 
 Each item's reduction list has one priority per transition between output lines. Priorities for an item must be strictly increasing. The example therefore reduces VCS once, then Load three times, VCS three more times, and finally Pi. Missing levels and blank lines repeat the last valid level; extra levels are ignored; a level that would grow wider keeps the prior level. Only a line containing exactly `@hide` hides the item. `hint_idle_format` and `hint_idle_right_format` remain available as non-responsive fallbacks.
 
+### Nonblocking command execution
+
+Command widgets are submitted through Zellij's background command API. Each widget permits only one in-flight process, tagged with a unique run ID; timer renders and focused-directory changes cannot start overlapping copies or let an older result replace a newer one. During periodic refreshes, zjstatus keeps the last completed value. A command that never exits can leave that value stale, but it cannot block Zellij or Pi or trigger a process storm; wrap commands with an OS `timeout` when automatic termination is required.
+
 ### Responsive main status line
 
 The original left/center/right status line can also reduce by width. Add numbered formats; omitted levels inherit the previous format. Reduction happens in rounds: every region reaches level 1 before any region reaches level 2. Within a round, the rightmost region in `format_precedence` reduces first.
@@ -195,7 +230,7 @@ At levels 1 and 2, `{tabs}` automatically reduces to nearby tabs and then the ac
 Place the following configuration in your default layout file, e.g. `~/.config/zellij/layouts/default.kdl`. Right after starting zellij, it will prompt for permissions, which need to be granted in order for zjstatus to work. Simply navigate to the pane or click on it and press `y`. This must be repeated on updates. For more details on permissions, please visit the [wiki](https://github.com/dj95/zjstatus/wiki/2-%E2%80%90-Permissions).
 
 > [!IMPORTANT]
-> Downloading zjstatus as file and using `file:~/path/to/zjstatus.wasm` is recommended, even if the quickstart includes the https location.
+> Run `./install.sh` first. The example uses the default destination, `file:~/.config/zellij/plugins/zjstatus.wasm`; when `ZELLIJ_CONFIG_DIR` or `XDG_CONFIG_HOME` changes it, use the resolved `<config-dir>/plugins/zjstatus.wasm` path instead.
 
 > [!IMPORTANT]
 > Using zjstatus involves creating new layouts and overriding the default one. This will lead to swap layouts not working, when they are not configured correctly. Please follow [this documentation](https://github.com/dj95/zjstatus/wiki/3-%E2%80%90-Configuration#swap-layouts) for getting swap layouts back to work, if you need them.
@@ -207,8 +242,8 @@ Place the following configuration in your default layout file, e.g. `~/.config/z
 layout {
     default_tab_template {
         children
-        pane size=1 borderless=true {
-            plugin location="https://github.com/dj95/zjstatus/releases/latest/download/zjstatus.wasm" {
+        pane size=2 borderless=true {
+            plugin location="file:~/.config/zellij/plugins/zjstatus.wasm" {
                 format_left   "{mode} #[fg=#89B4FA,bold]{session}"
                 format_center "{tabs}"
                 format_right  "{command_git_branch} {datetime}"
