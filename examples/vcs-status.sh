@@ -51,7 +51,7 @@ counts=
 
 if jj root >/dev/null 2>&1; then
     kind=jj
-    bookmark=$(clean "$(jj log --no-graph -r @ -T 'bookmarks' 2>/dev/null)")
+    bookmark=$(clean "$(jj log --no-graph -r 'heads(::@ & bookmarks())' -T 'bookmarks' 2>/dev/null)")
     description=$(clean "$(jj log --no-graph -r @ -T 'description.first_line()' 2>/dev/null)")
     if [ -n "$description" ]; then
         revision='@ '
