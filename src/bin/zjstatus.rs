@@ -852,7 +852,7 @@ enum IdleSide {
 
 struct IdleItem {
     command: String,
-    reductions: Vec<usize>,
+    variant_count: usize,
 }
 
 #[derive(Default)]
@@ -860,19 +860,40 @@ struct IdleRow {
     left: Vec<IdleItem>,
     right: Vec<IdleItem>,
     separator: FormattedPart,
+    shrink_order: Vec<(IdleSide, usize)>,
 }
 
 impl IdleRow {
     fn from_config(configuration: &BTreeMap<String, String>) -> anyhow::Result<Option<Self>> {
+        reject_removed_idle_config(configuration)?;
         if !configuration.contains_key("hint_idle_left")
             && !configuration.contains_key("hint_idle_right")
         {
+            if configuration.contains_key("hint_idle_shrink_order") {
+                anyhow::bail!("hint_idle_shrink_order requires hint_idle_left or hint_idle_right");
+            }
             return Ok(None);
         }
 
         let mut seen = BTreeMap::new();
-        let left = idle_items("hint_idle_left", configuration, &mut seen)?;
-        let right = idle_items("hint_idle_right", configuration, &mut seen)?;
+        let mut left = idle_items("hint_idle_left", IdleSide::Left, configuration, &mut seen)?;
+        let mut right = idle_items("hint_idle_right", IdleSide::Right, configuration, &mut seen)?;
+        let shrink_order = configuration
+            .get("hint_idle_shrink_order")
+            .map(String::as_str)
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(|name| {
+                let &(side, index) = seen.get(name).ok_or_else(|| {
+                    anyhow::anyhow!("Unknown command in hint_idle_shrink_order: {name}")
+                })?;
+                match side {
+                    IdleSide::Left => left[index].variant_count += 1,
+                    IdleSide::Right => right[index].variant_count += 1,
+                }
+                Ok((side, index))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
         let separator = FormattedPart::from_format_string(
             configuration
                 .get("hint_idle_separator")
@@ -885,6 +906,7 @@ impl IdleRow {
             left,
             right,
             separator,
+            shrink_order,
         }))
     }
 
@@ -900,18 +922,6 @@ impl IdleRow {
         let separator = self.separator.format_string(&self.separator.content);
         let mut left_levels = vec![0; self.left.len()];
         let mut right_levels = vec![0; self.right.len()];
-        let mut steps = Vec::new();
-        let mut order = 0;
-
-        for (side, items) in [(IdleSide::Left, &self.left), (IdleSide::Right, &self.right)] {
-            for (item_index, item) in items.iter().enumerate() {
-                for priority in &item.reductions {
-                    steps.push((*priority, order, side, item_index));
-                    order += 1;
-                }
-            }
-        }
-        steps.sort_by_key(|(priority, order, _, _)| (*priority, *order));
 
         let render = |left_levels: &[usize], right_levels: &[usize]| {
             (
@@ -925,7 +935,7 @@ impl IdleRow {
         }
 
         let mut last = (left, right);
-        for (_, _, side, item_index) in steps {
+        for &(side, item_index) in &self.shrink_order {
             let levels = match side {
                 IdleSide::Left => &mut left_levels,
                 IdleSide::Right => &mut right_levels,
@@ -941,14 +951,26 @@ impl IdleRow {
     }
 }
 
+fn reject_removed_idle_config(configuration: &BTreeMap<String, String>) -> anyhow::Result<()> {
+    if let Some(key) = configuration.keys().find(|key| {
+        key.starts_with("hint_idle_") && (key.ends_with("_command") || key.ends_with("_reductions"))
+    }) {
+        anyhow::bail!(
+            "{key} was removed; use command names in hint_idle_left/right and hint_idle_shrink_order"
+        );
+    }
+    Ok(())
+}
+
 fn idle_items(
-    side: &str,
+    config_key: &str,
+    side: IdleSide,
     configuration: &BTreeMap<String, String>,
-    seen: &mut BTreeMap<String, ()>,
+    seen: &mut BTreeMap<String, (IdleSide, usize)>,
 ) -> anyhow::Result<Vec<IdleItem>> {
     let mut items = Vec::new();
     for name in configuration
-        .get(side)
+        .get(config_key)
         .map(String::as_str)
         .unwrap_or_default()
         .split_whitespace()
@@ -957,50 +979,21 @@ fn idle_items(
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
         {
-            anyhow::bail!("Invalid idle item name: {name}");
+            anyhow::bail!("Invalid command name in {config_key}: {name}");
         }
-        if seen.insert(name.to_owned(), ()).is_some() {
-            anyhow::bail!("Duplicate idle item: {name}");
+        let index = items.len();
+        if seen.insert(name.to_owned(), (side, index)).is_some() {
+            anyhow::bail!("Duplicate idle command: {name}");
         }
 
-        let command_key = format!("hint_idle_{name}_command");
-        let command = configuration
-            .get(&command_key)
-            .filter(|command| !command.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("Missing {command_key}"))?;
-        let command = if command.starts_with("command_") {
-            command.to_owned()
-        } else {
-            format!("command_{command}")
-        };
+        let command = format!("command_{name}");
         let configured_command = format!("{command}_command");
         if !configuration.contains_key(&configured_command) {
             anyhow::bail!("Missing {configured_command}");
         }
-
-        let reductions_key = format!("hint_idle_{name}_reductions");
-        let reductions = configuration
-            .get(&reductions_key)
-            .map(String::as_str)
-            .unwrap_or_default()
-            .split(|character: char| character.is_whitespace() || character == ',')
-            .filter(|priority| !priority.is_empty())
-            .map(|priority| {
-                priority.parse::<usize>().map_err(|_| {
-                    anyhow::anyhow!("Invalid priority in {reductions_key}: {priority}")
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        if reductions
-            .windows(2)
-            .any(|priorities| priorities[0] >= priorities[1])
-        {
-            anyhow::bail!("{reductions_key} must be strictly increasing");
-        }
-
         items.push(IdleItem {
             command,
-            reductions,
+            variant_count: 1,
         });
     }
     Ok(items)
@@ -1056,7 +1049,7 @@ fn render_idle_variants(
                 .map(|widget| widget.process(&item.command, state))
                 .unwrap_or_default();
             let variants = render_idle_output(&output, configuration);
-            normalize_idle_variants(variants, item.reductions.len() + 1)
+            normalize_idle_variants(variants, item.variant_count)
         })
         .collect()
 }
@@ -1338,12 +1331,10 @@ mod test {
             ("hint_idle_left".into(), "vcs pi".into()),
             ("hint_idle_right".into(), "load".into()),
             ("hint_idle_separator".into(), "|".into()),
-            ("hint_idle_vcs_command".into(), "vcs".into()),
-            ("hint_idle_vcs_reductions".into(), "0 4 5 6".into()),
-            ("hint_idle_load_command".into(), "load".into()),
-            ("hint_idle_load_reductions".into(), "1 2 3".into()),
-            ("hint_idle_pi_command".into(), "pi".into()),
-            ("hint_idle_pi_reductions".into(), "7 8 9".into()),
+            (
+                "hint_idle_shrink_order".into(),
+                "vcs load load load vcs vcs vcs pi pi pi".into(),
+            ),
             ("command_vcs_command".into(), "ignored".into()),
             ("command_load_command".into(), "ignored".into()),
             ("command_pi_command".into(), "ignored".into()),
@@ -1385,29 +1376,50 @@ mod test {
     }
 
     #[test]
-    fn idle_configuration_rejects_invalid_items_and_priorities() {
-        let mut configuration = BTreeMap::from([
+    fn idle_configuration_uses_direct_commands_and_rejects_removed_aliases() {
+        let legacy = BTreeMap::from([
             ("hint_idle_left".into(), "vcs".into()),
             ("hint_idle_vcs_command".into(), "vcs".into()),
             ("command_vcs_command".into(), "ignored".into()),
-            ("hint_idle_vcs_reductions".into(), "2 1".into()),
         ]);
         assert!(
-            IdleRow::from_config(&configuration)
+            IdleRow::from_config(&legacy)
                 .err()
                 .unwrap()
                 .to_string()
-                .contains("strictly increasing")
+                .contains("was removed")
         );
 
-        configuration.insert("hint_idle_vcs_reductions".into(), "0".into());
-        configuration.insert("hint_idle_right".into(), "vcs".into());
+        let missing = BTreeMap::from([("hint_idle_left".into(), "vcs".into())]);
         assert!(
-            IdleRow::from_config(&configuration)
+            IdleRow::from_config(&missing)
                 .err()
                 .unwrap()
                 .to_string()
-                .contains("Duplicate idle item")
+                .contains("Missing command_vcs_command")
+        );
+
+        let mut direct = BTreeMap::from([
+            ("hint_idle_left".into(), "vcs".into()),
+            ("hint_idle_shrink_order".into(), "unknown".into()),
+            ("command_vcs_command".into(), "ignored".into()),
+        ]);
+        assert!(
+            IdleRow::from_config(&direct)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Unknown command")
+        );
+
+        direct.insert("hint_idle_shrink_order".into(), "vcs".into());
+        direct.insert("hint_idle_right".into(), "vcs".into());
+        assert!(
+            IdleRow::from_config(&direct)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Duplicate idle command")
         );
     }
     #[test]

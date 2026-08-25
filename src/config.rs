@@ -38,10 +38,10 @@ pub enum Part {
 impl FromStr for Part {
     fn from_str(part: &str) -> Result<Self> {
         match part {
-            "l" => Ok(Part::Left),
-            "c" => Ok(Part::Center),
-            "r" => Ok(Part::Right),
-            _ => anyhow::bail!("Invalid part: {}", part),
+            "left" => Ok(Part::Left),
+            "center" => Ok(Part::Center),
+            "right" => Ok(Part::Right),
+            _ => anyhow::bail!("Invalid region: {part}"),
         }
     }
 
@@ -104,7 +104,7 @@ pub struct ModuleConfig {
     pub hide_frame_except_for_fullscreen: bool,
     pub hide_frame_except_for_scroll: bool,
     pub border: BorderConfig,
-    pub format_precedence: Vec<Part>,
+    pub shrink_order: Vec<Part>,
     pub hide_on_overlength: bool,
     responsive_parts: BTreeMap<Part, Vec<Vec<FormattedPart>>>,
     notification_show_interval: i64,
@@ -150,65 +150,28 @@ impl ModuleConfig {
             None => "",
         };
 
-        let format_precedence = match config.get("format_precedence") {
-            Some(conf) => {
-                let prec = conf
-                    .chars()
-                    .map(|c| Part::from_str(&c.to_string()))
-                    .collect();
-
-                match prec {
-                    Ok(prec) => prec,
-                    Err(e) => {
-                        anyhow::bail!("Invalid format_precedence: {}", e);
-                    }
-                }
-            }
-            None => vec![Part::Left, Part::Center, Part::Right],
-        };
-
-        let configured_levels = responsive_level_count(config);
-        let responsive_enabled = config
-            .get("format_responsive")
-            .is_some_and(|value| value == "true");
-        if responsive_enabled
-            && (format_precedence.len() != 3 || format_precedence.iter().unique().count() != 3)
-        {
-            anyhow::bail!("responsive format_precedence must contain l, c, and r exactly once");
-        }
-        let responsive_level_count = if responsive_enabled {
-            configured_levels.max(4)
-        } else {
-            0
-        };
+        reject_removed_responsive_config(config)?;
+        let shrink_levels = parse_shrink_levels(config)?;
+        let responsive_enabled = !shrink_levels.is_empty();
+        let shrink_order = parse_shrink_order(config, responsive_enabled)?;
         let responsive_parts = if responsive_enabled {
             BTreeMap::from([
                 (
                     Part::Left,
-                    responsive_formats(
-                        "format_left",
-                        left_parts_config,
-                        responsive_level_count,
-                        config,
-                    ),
+                    responsive_formats("format_left", left_parts_config, &shrink_levels, config),
                 ),
                 (
                     Part::Center,
                     responsive_formats(
                         "format_center",
                         center_parts_config,
-                        responsive_level_count,
+                        &shrink_levels,
                         config,
                     ),
                 ),
                 (
                     Part::Right,
-                    responsive_formats(
-                        "format_right",
-                        right_parts_config,
-                        responsive_level_count,
-                        config,
-                    ),
+                    responsive_formats("format_right", right_parts_config, &shrink_levels, config),
                 ),
             ])
         } else {
@@ -239,7 +202,7 @@ impl ModuleConfig {
             hide_frame_except_for_fullscreen,
             hide_frame_except_for_scroll,
             border: border_config,
-            format_precedence,
+            shrink_order,
             hide_on_overlength,
             responsive_parts,
             notification_show_interval,
@@ -278,12 +241,7 @@ impl ModuleConfig {
             return output;
         }
 
-        let reduction_order = self
-            .format_precedence
-            .iter()
-            .rev()
-            .copied()
-            .collect::<Vec<_>>();
+        let reduction_order = self.shrink_order.clone();
         for target_level in 1..=max_level {
             for part in &reduction_order {
                 levels[part.index()] = target_level;
@@ -353,14 +311,15 @@ impl ModuleConfig {
     }
 
     fn configured_widget_region(&self, widget: &str) -> Option<Part> {
-        let token = format!("{{{widget}}}");
-        [
-            (Part::Left, self.left_parts_config.as_str()),
-            (Part::Center, self.center_parts_config.as_str()),
-            (Part::Right, self.right_parts_config.as_str()),
-        ]
-        .into_iter()
-        .find_map(|(part, format)| format.contains(&token).then_some(part))
+        [Part::Left, Part::Center, Part::Right]
+            .into_iter()
+            .find(|part| {
+                self.responsive_parts.get(part).is_some_and(|levels| {
+                    levels
+                        .iter()
+                        .any(|parts| parts_contain_widget(parts, widget))
+                })
+            })
     }
 
     fn minimum_bar_output(
@@ -424,7 +383,7 @@ impl ModuleConfig {
             return output;
         }
 
-        for part in self.format_precedence.iter().rev() {
+        for part in &self.shrink_order {
             if *part == Part::Center {
                 continue;
             }
@@ -699,9 +658,9 @@ impl ModuleConfig {
         ]);
 
         let combinations = [
-            (self.format_precedence[2], self.format_precedence[1]),
-            (self.format_precedence[1], self.format_precedence[0]),
-            (self.format_precedence[2], self.format_precedence[0]),
+            (self.shrink_order[0], self.shrink_order[1]),
+            (self.shrink_order[1], self.shrink_order[2]),
+            (self.shrink_order[0], self.shrink_order[2]),
         ];
 
         for win in combinations.iter() {
@@ -803,35 +762,106 @@ fn bar_outputs_fit(left: &str, center: &str, right: &str, cols: usize) -> bool {
     left_width <= center_start && center_end <= right_start && left_width + right_width <= cols
 }
 
-fn responsive_level_count(config: &BTreeMap<String, String>) -> usize {
-    ["format_left_", "format_center_", "format_right_"]
-        .iter()
-        .flat_map(|prefix| {
-            config
-                .keys()
-                .filter_map(move |key| key.strip_prefix(prefix)?.parse::<usize>().ok())
-        })
-        .max()
-        .unwrap_or_default()
+fn reject_removed_responsive_config(config: &BTreeMap<String, String>) -> anyhow::Result<()> {
+    for key in ["format_responsive", "format_precedence"] {
+        if config.contains_key(key) {
+            anyhow::bail!("{key} was removed; use format_shrink_levels and format_shrink_order");
+        }
+    }
+    if let Some(key) = config.keys().find(|key| {
+        ["format_left_", "format_center_", "format_right_"]
+            .iter()
+            .any(|prefix| {
+                key.strip_prefix(prefix)
+                    .is_some_and(|suffix| suffix.parse::<usize>().is_ok())
+            })
+    }) {
+        anyhow::bail!("{key} was removed; use a named format shrink level");
+    }
+    Ok(())
+}
+
+fn parse_shrink_levels(config: &BTreeMap<String, String>) -> anyhow::Result<Vec<String>> {
+    let Some(configured) = config.get("format_shrink_levels") else {
+        if let Some(key) = configured_named_format(config, &[]) {
+            anyhow::bail!("{key} requires format_shrink_levels");
+        }
+        return Ok(Vec::new());
+    };
+    let levels = configured
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if levels.is_empty() {
+        anyhow::bail!("format_shrink_levels must list at least one named level");
+    }
+    for level in &levels {
+        if level == "full"
+            || !level.starts_with(|character: char| character.is_ascii_alphabetic())
+            || !level.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+            })
+        {
+            anyhow::bail!("Invalid format shrink level: {level}");
+        }
+    }
+    if levels.iter().unique().count() != levels.len() {
+        anyhow::bail!("format_shrink_levels must contain unique names");
+    }
+    if let Some(key) = configured_named_format(config, &levels) {
+        anyhow::bail!("Unknown format shrink level in {key}");
+    }
+    Ok(levels)
+}
+
+fn configured_named_format(config: &BTreeMap<String, String>, levels: &[String]) -> Option<String> {
+    config.keys().find_map(|key| {
+        ["format_left_", "format_center_", "format_right_"]
+            .iter()
+            .find_map(|prefix| key.strip_prefix(prefix))
+            .filter(|suffix| !levels.iter().any(|level| level == suffix))
+            .map(|_| key.clone())
+    })
+}
+
+fn parse_shrink_order(
+    config: &BTreeMap<String, String>,
+    responsive_enabled: bool,
+) -> anyhow::Result<Vec<Part>> {
+    let Some(configured) = config.get("format_shrink_order") else {
+        if responsive_enabled {
+            anyhow::bail!("Missing format_shrink_order");
+        }
+        return Ok(vec![Part::Right, Part::Center, Part::Left]);
+    };
+    if !responsive_enabled {
+        anyhow::bail!("format_shrink_order requires format_shrink_levels");
+    }
+    let order = configured
+        .split_whitespace()
+        .map(Part::from_str)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    if order.len() != 3 || order.iter().unique().count() != 3 {
+        anyhow::bail!("format_shrink_order must contain left, center, and right exactly once");
+    }
+    Ok(order)
 }
 
 fn responsive_formats(
     name: &str,
     base: &str,
-    level_count: usize,
+    levels: &[String],
     config: &BTreeMap<String, String>,
 ) -> Vec<Vec<FormattedPart>> {
     let mut current = base.to_owned();
-    (0..=level_count)
-        .map(|level| {
-            if level > 0
-                && let Some(format) = config.get(&format!("{name}_{level}"))
-            {
-                current.clone_from(format);
-            }
-            parts_from_config(Some(&current), config)
-        })
-        .collect()
+    let mut formats = vec![parts_from_config(Some(&current), config)];
+    for level in levels {
+        if let Some(format) = config.get(&format!("{name}_{level}")) {
+            current.clone_from(format);
+        }
+        formats.push(parts_from_config(Some(&current), config));
+    }
+    formats
 }
 
 fn parts_from_config(
@@ -875,17 +905,17 @@ mod test {
 
     fn responsive_config() -> BTreeMap<String, String> {
         [
-            ("format_responsive", "true"),
-            ("format_precedence", "lcr"),
+            ("format_shrink_levels", "compact minimal locator tiny"),
+            ("format_shrink_order", "right center left"),
             ("format_left", "LLLL"),
-            ("format_left_1", "L1"),
-            ("format_left_2", "L"),
+            ("format_left_compact", "L1"),
+            ("format_left_minimal", "L"),
             ("format_center", "CCCC"),
-            ("format_center_1", "C1"),
-            ("format_center_2", "C"),
+            ("format_center_compact", "C1"),
+            ("format_center_minimal", "C"),
             ("format_right", "RRRR"),
-            ("format_right_1", "R1"),
-            ("format_right_2", "R"),
+            ("format_right_compact", "R1"),
+            ("format_right_minimal", "R"),
         ]
         .into_iter()
         .map(|(key, value)| (key.to_owned(), value.to_owned()))
@@ -927,14 +957,23 @@ mod test {
     #[test]
     fn responsive_right_drops_datetime_before_hostname() {
         let config = BTreeMap::from([
-            ("format_responsive".to_owned(), "true".to_owned()),
-            ("format_precedence".to_owned(), "lcr".to_owned()),
+            (
+                "format_shrink_levels".to_owned(),
+                "compact minimal".to_owned(),
+            ),
+            (
+                "format_shrink_order".to_owned(),
+                "right center left".to_owned(),
+            ),
             (
                 "format_right".to_owned(),
                 "notification host datetime".to_owned(),
             ),
-            ("format_right_1".to_owned(), "notification host".to_owned()),
-            ("format_right_2".to_owned(), "notification".to_owned()),
+            (
+                "format_right_compact".to_owned(),
+                "notification host".to_owned(),
+            ),
+            ("format_right_minimal".to_owned(), "notification".to_owned()),
         ]);
         let mut module = ModuleConfig::new(&config).unwrap();
         let output = module.select_bar_output(
@@ -952,13 +991,16 @@ mod test {
     #[test]
     fn responsive_levels_cannot_drop_a_current_notification() {
         let config = BTreeMap::from([
-            ("format_responsive".to_owned(), "true".to_owned()),
-            ("format_precedence".to_owned(), "lcr".to_owned()),
+            ("format_shrink_levels".to_owned(), "compact".to_owned()),
+            (
+                "format_shrink_order".to_owned(),
+                "right center left".to_owned(),
+            ),
             (
                 "format_right".to_owned(),
                 "{notifications} datetime".to_owned(),
             ),
-            ("format_right_1".to_owned(), "host".to_owned()),
+            ("format_right_compact".to_owned(), "host".to_owned()),
             (
                 "notification_format_unread".to_owned(),
                 "{message}".to_owned(),
@@ -988,43 +1030,83 @@ mod test {
     }
 
     #[test]
-    fn format_precedence_requires_each_region_once() {
-        let mut config = BTreeMap::from([
-            ("format_left".to_owned(), "left".to_owned()),
-            ("format_responsive".to_owned(), "true".to_owned()),
-            ("format_precedence".to_owned(), "llr".to_owned()),
+    fn notification_configured_only_in_named_level_is_still_retained() {
+        let config = BTreeMap::from([
+            (
+                "format_shrink_levels".to_owned(),
+                "compact minimal".to_owned(),
+            ),
+            (
+                "format_shrink_order".to_owned(),
+                "right center left".to_owned(),
+            ),
+            ("format_left".to_owned(), "LLLL".to_owned()),
+            ("format_right".to_owned(), "datetime".to_owned()),
+            (
+                "format_right_compact".to_owned(),
+                "{notifications} host".to_owned(),
+            ),
+            ("format_right_minimal".to_owned(), String::new()),
+            (
+                "notification_format_unread".to_owned(),
+                "{message}".to_owned(),
+            ),
+            ("notification_show_interval".to_owned(), "60".to_owned()),
         ]);
-        assert!(ModuleConfig::new(&config).is_err());
-        config.remove("format_responsive");
-        assert!(ModuleConfig::new(&config).is_ok());
+        let mut module = ModuleConfig::new(&config).unwrap();
+        let widgets = BTreeMap::from([(
+            "notifications".to_owned(),
+            Arc::new(NotificationWidget::new(&config)) as Arc<dyn Widget>,
+        )]);
+        let output = module.select_bar_output(
+            &ZellijState {
+                cols: 10,
+                incoming_notification: Some(notification::Message {
+                    body: "deploy".to_owned(),
+                    received_at: Local::now(),
+                }),
+                ..Default::default()
+            },
+            &widgets,
+        );
 
-        let disabled = BTreeMap::from([
-            ("format_responsive".to_owned(), "false".to_owned()),
+        assert_eq!(output.levels, [1, 1, 2]);
+        assert_eq!(output.right, "deploy");
+        assert!(output.clicks_disabled);
+    }
+
+    #[test]
+    fn named_shrink_config_rejects_ambiguous_or_removed_keys() {
+        let invalid_order = BTreeMap::from([
+            ("format_shrink_levels".to_owned(), "compact".to_owned()),
+            (
+                "format_shrink_order".to_owned(),
+                "left left right".to_owned(),
+            ),
+        ]);
+        assert!(ModuleConfig::new(&invalid_order).is_err());
+
+        let removed = BTreeMap::from([
+            ("format_responsive".to_owned(), "true".to_owned()),
             ("format_left_1".to_owned(), "compact".to_owned()),
         ]);
-        assert!(
-            ModuleConfig::new(&disabled)
-                .unwrap()
-                .responsive_parts
-                .is_empty()
-        );
+        let error = ModuleConfig::new(&removed).err().unwrap().to_string();
+        assert!(error.contains("format_responsive was removed"));
+
+        let unnamed = BTreeMap::from([("format_left_compact".to_owned(), "compact".to_owned())]);
+        let error = ModuleConfig::new(&unnamed).err().unwrap().to_string();
+        assert!(error.contains("requires format_shrink_levels"));
     }
 
     #[test]
     fn minimum_layout_keeps_tab_position_and_prioritizes_notification() {
         let config = [
-            ("format_responsive", "true"),
-            ("format_precedence", "lcr"),
+            ("format_shrink_levels", "compact minimal locator tiny"),
+            ("format_shrink_order", "right center left"),
             ("format_left", "{tabs}"),
-            ("format_left_1", "{tabs}"),
-            ("format_left_2", "{tabs}"),
-            ("format_left_3", "{tabs}"),
-            ("format_left_4", "{tabs}"),
             ("format_right", "{notifications} clock"),
-            ("format_right_1", "{notifications} host"),
-            ("format_right_2", "{notifications}"),
-            ("format_right_3", "{notifications}"),
-            ("format_right_4", "{notifications}"),
+            ("format_right_compact", "{notifications} host"),
+            ("format_right_minimal", "{notifications}"),
             ("notification_format_unread", "{message}"),
             ("notification_show_interval", "60"),
             ("tab_normal", "{name} "),
