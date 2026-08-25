@@ -105,6 +105,51 @@ is also available in case you only want to use *zjframes*.
 
 For configuring, please follow the [documentation](https://github.com/dj95/zjstatus/wiki/3-%E2%80%90-Configuration).
 
+### Responsive command row
+
+The idle hint row can be composed from arbitrary command widgets. Each command prints one display variant per line, widest first. Print `@hide` as a variant to hide that item. Lower reduction priorities are applied first across all items.
+
+The Pi example reuses `extensions/zellij-status.ts` from the `zellij-pi-dashboard` repository; zjstatus only reads its status files through [`examples/pi-status.sh`](examples/pi-status.sh). Link that extension into Pi, then restart Pi:
+
+```sh
+ln -sfn /path/to/zellij-pi-dashboard/extensions/zellij-status.ts ~/.pi/agent/extensions/zellij-status.ts
+```
+
+```javascript
+hint_idle_left              "vcs pi"
+hint_idle_right             "load"
+hint_idle_separator         "#[bg=$panel]  "
+hint_idle_vcs_command       "vcs"
+hint_idle_vcs_reductions    "0 4 5 6"
+hint_idle_load_command      "load"
+hint_idle_load_reductions   "1 2 3"
+hint_idle_pi_command        "pi"
+hint_idle_pi_reductions     "7 8 9"
+
+command_vcs_command         "sh -c '$HOME/.config/zellij/scripts/vcs-status.sh'"
+command_vcs_cwd             "{focused_pane_cwd}"
+command_vcs_rendermode      "raw"
+command_vcs_interval        "2"
+command_pi_command          "sh -c '$HOME/.config/zellij/scripts/pi-status.sh'"
+command_pi_rendermode       "raw"
+command_pi_interval         "2"
+command_load_command        "sh -c '$HOME/.config/zellij/scripts/host-load.sh'"
+command_load_rendermode     "raw"
+command_load_interval       "2"
+```
+
+For example, a command with four visible levels and a hidden level prints:
+
+```text
+full status
+compact status
+minimal status
+idle status
+@hide
+```
+
+Each item's reduction list has one priority per transition between output lines. Priorities for an item must be strictly increasing. The example therefore reduces VCS once, then Load three times, VCS three more times, and finally Pi. Missing levels and blank lines repeat the last valid level; extra levels are ignored; a level that would grow wider keeps the prior level. Only a line containing exactly `@hide` hides the item. `hint_idle_format` and `hint_idle_right_format` remain available as non-responsive fallbacks.
+
 ## 🏎️ Quick Start for zjstatus
 
 Place the following configuration in your default layout file, e.g. `~/.config/zellij/layouts/default.kdl`. Right after starting zellij, it will prompt for permissions, which need to be granted in order for zjstatus to work. Simply navigate to the pane or click on it and press `y`. This must be repeated on updates. For more details on permissions, please visit the [wiki](https://github.com/dj95/zjstatus/wiki/2-%E2%80%90-Permissions).
