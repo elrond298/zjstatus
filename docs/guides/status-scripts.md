@@ -1,6 +1,6 @@
 # Status script examples
 
-The scripts in [`examples/`](../examples/) turn VCS, Pi, and Linux host state into raw zjstatus command-widget output. Each script emits several display variants, from most detailed to smallest or hidden, so the responsive command row can keep useful information as the terminal narrows.
+The scripts in [`examples/`](../../examples/) turn VCS, Pi, and Linux host state into raw zjstatus command-widget output. Each script emits several display variants, from most detailed to smallest or hidden, so the responsive command row can keep useful information as the terminal narrows. See the [responsive command-row guide](responsive-command-row.md) for the selection protocol.
 
 ## Quick setup
 
@@ -55,7 +55,7 @@ Blank or missing lines inherit the previous valid variant. zjstatus also rejects
 
 ## VCS status
 
-[`vcs-status.sh`](../examples/vcs-status.sh) detects Jujutsu first, then Git, in the focused pane's working directory. Outside a repository it emits nothing.
+[`vcs-status.sh`](../../examples/vcs-status.sh) detects Jujutsu first, then Git, in the focused pane's working directory. Outside a repository it emits nothing.
 
 ### Display
 
@@ -92,7 +92,7 @@ The script requires `jq`, `awk`, and either `jj` or `git`. It strips control and
 
 ## Pi session status
 
-[`pi-status.sh`](../examples/pi-status.sh) reads JSON status files produced by `zellij-pi-dashboard/extensions/zellij-status.ts`. It does not start or query Pi directly.
+[`pi-status.sh`](../../examples/pi-status.sh) reads JSON status files produced by `zellij-pi-dashboard/extensions/zellij-status.ts`. It does not start or query Pi directly.
 
 ### Enable the producer
 
@@ -150,7 +150,7 @@ The script requires `jq`, a running Zellij session, and the Pi status extension 
 
 ## Host load
 
-[`host-load.sh`](../examples/host-load.sh) reports Linux disk throughput, network throughput, and the one-minute load average.
+[`host-load.sh`](../../examples/host-load.sh) reports Linux disk throughput, network throughput, and the one-minute load average.
 
 ### Symbol legend
 

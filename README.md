@@ -1,342 +1,83 @@
 <h1 align="center">zjstatus & zjframes</h1>
 
 <p align="center">
-  A configurable and themable statusbar for zellij.
-  <br><br>
-  <a href="https://github.com/dj95/zjstatus/actions/workflows/lint.yml">
-    <img alt="clippy check" src="https://github.com/dj95/zjstatus/actions/workflows/lint.yml/badge.svg" />
-  </a>
-  <a href="https://github.com/dj95/zjstatus/releases">
-    <img alt="latest version" src="https://img.shields.io/github/v/tag/dj95/zjstatus.svg?sort=semver" />
-  </a>
-  <a href="https://github.com/dj95/zjstatus/wiki">
-    <img alt="GitHub Wiki" src="https://img.shields.io/badge/documentation-wiki-wiki?logo=github">
-  </a>
-
-  <br><br>
-  The goal of this statusbar is to provide a highly customizable and extensible statusbar for zellij. Single
-  modules can be formatted separately. Due to the widget structure new modules can be created with ease.
-
-  As an addition, this repository contains *zjframes* which can be used to toggle pane frames based on different
-  conditions even without loading *zjstatus*, e.g. when using the default status bars.
+  A configurable, themable status bar and frame controller for Zellij.
 </p>
 
-![Screenshot of the statusbar](./assets/demo.png)
+<p align="center">
+  <img src="./assets/demo.png" alt="Screenshot of the statusbar" />
+</p>
 
-## Focus of this fork
+## What is included
 
-- **Contextual key hints:** a second row shows keybindings for supported Zellij modes after a short idle delay, then dismisses on input. Hints paginate as complete key-description pairs.
-- **Adaptive, progressive width reduction:** key hints, command status, tabs, and the original main bar reduce in coordinated levels before any essential text is truncated.
-- **Nonblocking commands:** status scripts run through Zellij's background command API with at most one process per widget; slow or hung scripts keep the last completed value instead of blocking Zellij or Pi or spawning overlapping copies.
+- **zjstatus** — a visible status bar with widgets, formatted output, contextual key hints, responsive rows, and asynchronous command integrations.
+- **zjframes** — a background-only plugin that hides or shows pane frames based on Zellij state.
 
-### [👉 Check out and share your awesome configs in the community showcase!](https://github.com/dj95/zjstatus/discussions/44)
+This fork adds three independently responsive systems: contextual key-hint compression, main status-bar compression, and a responsive idle command row. Slow status commands retain their last completed value instead of blocking Zellij or the active Pi session.
 
-<details>
-<summary><h3>Examples</h3></summary>
-<b><a href="./examples/tmux.kdl">tmux style</a></b>
-<img src="./examples/tmux.png" alt="tmux style bar" />
-<br>
-<b><a href="./examples/simple.kdl">simple style</a></b>
-<img src="./examples/simple.png" alt="simple style bar" />
-<br>
-<b><a href="./examples/slanted.kdl">slanted style</a></b>
-<img src="./examples/slanted.png" alt="slanted style bar" />
-<br>
-<b><a href="./examples/swap-layouts.kdl">example for swapping layouts with zjstatus</a></b>
-<img src="./examples/swap-layouts.png" alt="example for swapping layouts with zjstatus" />
-<br>
-<b><a href="./examples/compact.kdl">compact style (thanks to @segaja)</a></b>
-<img src="./examples/compact.png" alt="compact style bar" />
-<br>
-<b><a href="./examples/conky.kdl">conky status (thanks to @benzwt)</a></b>
-<a href="./examples/conky.conf">conky.conf</a>
-<img src="./examples/conky.png" alt="conky status" />
-<br>
-<b>Demo GIF</b>
-<img src="./assets/demo.gif" alt="Demo GIF of zellij with zjstatus" />
-</details>
+## Documentation
 
-## 🚀 Installation
+Start with the [documentation home](docs/README.md):
 
-> [!TIP]
-> For more detailed instructions, check out the [wiki](https://github.com/dj95/zjstatus/wiki/1-%E2%80%90-Installation)!
+- [Installation](docs/getting-started/installation.md)
+- [First status bar](docs/getting-started/first-status-bar.md)
+- [Contextual key hints](docs/guides/key-hints.md)
+- [Main status-bar compression](docs/guides/status-bar-compression.md)
+- [Responsive command row](docs/guides/responsive-command-row.md)
+- [Commands and pipes](docs/guides/commands-and-pipes.md)
+- [Configuration reference](docs/reference/configuration.md)
+- [Troubleshooting](docs/operations/troubleshooting.md)
 
-Download the latest binary in the github releases. Place it somewhere, zellij is able to access it. Then the
-plugin can be included by referencing it in a layout file, e.g. the default layout one, or the config file.
+## Installation
 
-In contrast to *zjstatus*, *zjframes* should only be used in the `load_plugins` option of the *config.kdl*
-from zellij, as it should only be loaded in the background. For more details, please follow the [documentation](https://github.com/dj95/zjstatus/wiki/6---zjframes)
+Download a release WASM artifact, place it where Zellij can read it, and load `zjstatus` from a layout. Load `zjframes` through Zellij's background `load_plugins` configuration; it is not a visible pane.
 
-You could also refer to the plugin guide from zellij, after downloading the binary: [https://zellij.dev/documentation/plugin-loading](https://zellij.dev/documentation/plugin-loading)
-
-Please ensure, that the configuration is correct.
-
-> [!IMPORTANT]
-> In case you experience any crashes or issues, please in the first step try to clear the cache! (`$HOME/.cache/zellij/` for Linux, `$HOME/Library/Caches/org.Zellij-Contributors.Zellij/` on macOS)
-
-Sometimes, especially when updating plugins, it might come to caching issues, which can be resolved by clearing it. Please keep in
-mind, that it will also clear the cache for running sessions and revokes granted permissions for plugins.
-
-To build this fork and install `zjstatus.wasm` plus its responsive status scripts under `~/.config/zellij`:
+To build this repository and install the plugin plus bundled scripts:
 
 ```sh
+rustup target add wasm32-wasip1
 ./install.sh
 ```
 
-The destination is `$ZELLIJ_CONFIG_DIR` when set, otherwise `$XDG_CONFIG_HOME/zellij`, falling back to `~/.config/zellij`. When using a non-default directory, point the `command_*_command` paths in your layout to its `scripts` directory. Builds use one Cargo job by default to limit memory usage; set `CARGO_BUILD_JOBS` to opt into more parallelism.
+The installer resolves its destination as `$ZELLIJ_CONFIG_DIR`, then `$XDG_CONFIG_HOME/zellij`, then `~/.config/zellij`. It installs the plugin under `plugins/` and VCS, Pi, and host-load scripts under `scripts/`. See the [installation guide](docs/getting-started/installation.md).
 
-## ❄️ Installation with nix flake
+## Minimal layout
 
-Add this repository to your inputs and then with the following overlay to your packages.
-Then you are able to install and refer to it with `pkgs.zjstatus`. When templating the
-config file, you can use `${pkgs.zjstatus}/bin/zjstatus.wasm` as the path. `${pkgs.zjstatus}/bin/zjframes.wasm`
-is also available in case you only want to use *zjframes*.
-
-```nix
-  inputs = {
-    # ...
-
-    zjstatus = {
-      url = "github:dj95/zjstatus";
-    };
-  };
-
-
-  # define the outputs of this flake - especially the home configurations
-  outputs = { self, nixpkgs, zjstatus, ... }@inputs:
-  let
-    inherit (inputs.nixpkgs.lib) attrValues;
-
-    overlays = with inputs; [
-      # ...
-      (final: prev: {
-        zjstatus = zjstatus.packages.${prev.system}.default;
-      })
-    ];
-```
-
-## ⚙️ Configuration
-
-For configuring, please follow the [documentation](https://github.com/dj95/zjstatus/wiki/3-%E2%80%90-Configuration).
-
-### Contextual key hints
-
-Give a borderless zjstatus pane two rows (`size=2`). The upper row reads Zellij's `InitialKeybinds` data and, after 500 ms of idle time in Pane, Resize, Tab, Scroll, Search, Session, Move, or Tmux mode, shows that mode's available keys. Input dismisses the one-shot hint; when hints are absent, the same row displays the responsive command status described below.
+After `./install.sh`, adapt the plugin path if you use a non-default config directory:
 
 ```kdl
-hint_mode_format  "#[fg=blue,bold]"
-hint_key_format   "#[fg=yellow,bold]"
-hint_desc_format  "#[fg=white]"
-hint_space_format ""
-```
-
-Hints reduce their header first, then paginate fewer complete `key + description` pairs. A description stays complete whenever that pair fits by itself and is truncated only when the individual pair exceeds the whole row. Bind a key to cycle pages without focusing or intercepting normal pane input:
-
-```kdl
-keybinds {
-    shared {
-        bind "Alt \\" {
-            MessagePluginId {
-                name "key-hints-next-page"
-            }
-        }
-    }
-}
-```
-
-### Responsive command row
-
-The idle hint row can be composed directly from arbitrary `command_<name>_*` widgets. List each command name in `hint_idle_left` or `hint_idle_right`; there is no intermediate alias. Each command prints one display variant per line, widest first, and a line containing exactly `@hide` hides it.
-
-The included VCS, Pi, and host-load examples are documented in [Status script examples](docs/status-scripts.md), including setup, dependencies, symbols, configuration, and every responsive variant.
-
-```kdl
-hint_idle_left         "vcs pi"
-hint_idle_right        "load"
-hint_idle_separator    "#[bg=$panel]  "
-hint_idle_shrink_order "vcs pi pi pi pi load load load vcs vcs vcs pi pi pi"
-
-command_vcs_command    "sh -c '$HOME/.config/zellij/scripts/vcs-status.sh'"
-command_vcs_cwd        "{focused_pane_cwd}"
-command_vcs_rendermode "raw"
-command_vcs_interval   "2"
-command_pi_command     "sh -c '$HOME/.config/zellij/scripts/pi-status.sh'"
-command_pi_rendermode  "raw"
-command_pi_interval    "2"
-command_load_command   "sh -c '$HOME/.config/zellij/scripts/host-load.sh'"
-command_load_rendermode "raw"
-command_load_interval  "2"
-```
-
-For example, a command with four visible levels and a hidden level prints:
-
-```text
-full status
-compact status
-minimal status
-idle status
-@hide
-```
-
-Read `hint_idle_shrink_order` from left to right. Every occurrence of a name advances that command to its next output line. The example compacts VCS once, progressively truncates Pi goal/todo details four times, removes Load and the remaining VCS detail, then reduces Pi to progress, state, and aggregate forms. This prevents a long Pi detail from evicting stable VCS/Load information before trying shorter text. When the row is too wide, zjstatus follows this sequence until it fits.
-
-Missing and blank output lines inherit the previous valid level; lines beyond the number of configured transitions are ignored; a level that would grow wider keeps the prior level. Commands omitted from the shrink order remain at their first variant. Names must refer directly to configured `command_<name>_command` widgets, and one command cannot appear on both sides.
-
-This is a breaking configuration change. The former `hint_idle_<item>_command` aliases and `hint_idle_<item>_reductions` numeric priorities are rejected; replace them with direct command names and the single readable `hint_idle_shrink_order`. `hint_idle_format` and `hint_idle_right_format` remain available as non-responsive fallbacks.
-
-### Nonblocking command execution
-
-Command widgets are submitted through Zellij's background command API. Each widget permits only one in-flight process, tagged with a unique run ID; timer renders and focused-directory changes cannot start overlapping copies or let an older result replace a newer one. During periodic refreshes, zjstatus keeps the last completed value. A command that never exits can leave that value stale, but it cannot block Zellij or Pi or trigger a process storm; wrap commands with an OS `timeout` when automatic termination is required.
-
-### Responsive main status line
-
-The original left/center/right status line uses named shrink levels. `format_shrink_levels` enables responsive rendering and defines the levels from richest to smallest; omitted region formats inherit the previous level, while an explicitly empty format hides that region. `format_shrink_order` says which region shrinks first within each synchronized round.
-
-```kdl
-format_shrink_levels "compact minimal locator tiny"
-format_shrink_order  "right center left"
-
-format_left         "{mode} {session} {swap_layout}"
-format_left_compact "{mode} {session}"
-format_left_minimal "{mode}"
-format_left_locator ""
-
-format_center "{tabs}"
-
-format_right         "{notifications}{command_hostname}{datetime}"
-format_right_compact "{notifications}{command_hostname}"
-format_right_minimal "{notifications}"
-
-tab_locator_format         "{left_arrow}{index}{right_arrow}"
-tab_locator_compact_format "{index}"
-```
-
-Read the levels left to right: `full -> compact -> minimal -> locator -> tiny`. Within each round the example shrinks right, then center, then left; all three regions complete `compact` before any can enter `minimal`. A missing `format_<region>_<level>` inherits that region's prior format, so `{tabs}` need only be written once.
-
-The tabs widget uses the level position automatically: full tabs, nearby tabs, active tab, `<- N ->`, then `N`. A current notification survives every configured level. If the minimum layout still does not fit, zjstatus keeps the active-tab position and gives the remaining width to the notification; only then is the notification truncated.
-
-This is a breaking configuration change. `format_responsive`, `format_precedence`, and numeric keys such as `format_left_1` are rejected. Define semantic names once in `format_shrink_levels`, use matching `format_left_<name>`, `format_center_<name>`, and `format_right_<name>` keys, and spell out the readable region order in `format_shrink_order`.
-
-## 🏎️ Quick Start for zjstatus
-
-Place the following configuration in your default layout file, e.g. `~/.config/zellij/layouts/default.kdl`. Right after starting zellij, it will prompt for permissions, which need to be granted in order for zjstatus to work. Simply navigate to the pane or click on it and press `y`. This must be repeated on updates. For more details on permissions, please visit the [wiki](https://github.com/dj95/zjstatus/wiki/2-%E2%80%90-Permissions).
-
-> [!IMPORTANT]
-> Run `./install.sh` first. The example uses the default destination, `file:~/.config/zellij/plugins/zjstatus.wasm`; when `ZELLIJ_CONFIG_DIR` or `XDG_CONFIG_HOME` changes it, use the resolved `<config-dir>/plugins/zjstatus.wasm` path instead.
-
-> [!IMPORTANT]
-> Using zjstatus involves creating new layouts and overriding the default one. This will lead to swap layouts not working, when they are not configured correctly. Please follow [this documentation](https://github.com/dj95/zjstatus/wiki/3-%E2%80%90-Configuration#swap-layouts) for getting swap layouts back to work, if you need them.
-
-> [!IMPORTANT]
-> If you want to hide borders, please remove the `hide_frame_for_single_pane` option or set it to `false`. Otherwise zjstatus will toggle frame borders even if they are hidden in zellij's config!
-
-```javascript
 layout {
-    default_tab_template {
-        children
-        pane size=2 borderless=true {
-            plugin location="file:~/.config/zellij/plugins/zjstatus.wasm" {
-                format_left   "{mode} #[fg=#89B4FA,bold]{session}"
-                format_center "{tabs}"
-                format_right  "{command_git_branch} {datetime}"
-                format_space  ""
-
-                border_enabled  "false"
-                border_char     "─"
-                border_format   "#[fg=#6C7086]{char}"
-                border_position "top"
-
-                hide_frame_for_single_pane "true"
-
-                mode_normal  "#[bg=blue] "
-                mode_tmux    "#[bg=#ffc387] "
-
-                tab_normal   "#[fg=#6C7086] {name} "
-                tab_active   "#[fg=#9399B2,bold,italic] {name} "
-
-                command_git_branch_command     "git rev-parse --abbrev-ref HEAD"
-                command_git_branch_format      "#[fg=blue] {stdout} "
-                command_git_branch_interval    "10"
-                command_git_branch_rendermode  "static"
-                command_git_branch_cwd         "{focused_pane_cwd}"
-
-                datetime        "#[fg=#6C7086,bold] {format} "
-                datetime_format "%A, %d %b %Y %H:%M"
-                datetime_timezone "Europe/Berlin"
-            }
+    pane split_direction="vertical" {
+        pane
+    }
+    pane size=2 borderless=true {
+        plugin location="file:~/.config/zellij/plugins/zjstatus.wasm" {
+            format_left " {mode} {session} {tabs}"
+            format_right "{datetime} "
+            format_space " "
+            mode_normal "#[bg=#89B4FA] {name} "
+            mode_default_to_mode "normal"
+            tab_normal " {index} {name}"
+            tab_active "#[bold] {index} {name}"
+            datetime "{format}"
+            datetime_format "%H:%M"
         }
     }
 }
 ```
 
-## 🏎️ Quickstart for zjframes
+`zjstatus` renders a hint/idle row followed by the main status row, even when the first row is empty. Reserve two rows for the plugin; add one more row for a top or bottom border.
 
-Add the following to the *config.kdl* or add the plugin to `load_plugins`, if you already load other plugins in the background.
-Double check if the configuration matches your expectations. Then restart zellij.
+## Examples
 
-> [!IMPORTANT]
-> Downloading zjframes as file and using `file:~/path/to/zjframes.wasm` is recommended, even if the quickstart includes the https location.
+The repository includes example layouts under [`examples/`](examples/), including compact, tmux-style, slanted, conky, and swap-layout configurations. Bundled VCS, Pi, and Linux host metrics are documented in [Status script examples](docs/guides/status-scripts.md).
 
-```javascript
-// Plugins to load in the background when a new session starts
-load_plugins {
-    "https://github.com/dj95/zjstatus/releases/latest/download/zjframes.wasm" {
-        hide_frame_for_single_pane       "true"
-        hide_frame_except_for_search     "true"
-        hide_frame_except_for_scroll     "true"
-        hide_frame_except_for_fullscreen "true"
-    }
-}
-```
+## Development
 
-## 🧱 Widgets
+See [building and testing](docs/development/building-and-testing.md), [architecture](docs/development/architecture.md), and [contributing](docs/development/contributing.md).
 
-The documentation for the widgets can be found in the [wiki](https://github.com/dj95/zjstatus/wiki/4-%E2%80%90-Widgets).
+## Community and license
 
-The following widgets are available:
-
-- [command](https://github.com/dj95/zjstatus/wiki/4-%E2%80%90-Widgets#command)
-- [datetime](https://github.com/dj95/zjstatus/wiki/4-%E2%80%90-Widgets#datetime)
-- [mode](https://github.com/dj95/zjstatus/wiki/4-%E2%80%90-Widgets#mode)
-- [notifications](https://github.com/dj95/zjstatus/wiki/4-%E2%80%90-Widgets#notifications)
-- [pipe](https://github.com/dj95/zjstatus/wiki/4-%E2%80%90-Widgets#pipe)
-- [session](https://github.com/dj95/zjstatus/wiki/4-%E2%80%90-Widgets#session)
-- [swap layout](https://github.com/dj95/zjstatus/wiki/4-%E2%80%90-Widgets#swap-layout)
-- [tabs](https://github.com/dj95/zjstatus/wiki/4-%E2%80%90-Widgets#tabs)
-
-## 🚧 Development
-
-Make sure you have rust and the `wasm32-wasi` target installed. If using nix, you could utilize the nix-shell
-in this repo for obtaining `cargo` and `rustup`. Then you'll only need to add the target with
-`rustup target add wasm32-wasi`.
-
-With the toolchain, simply build `zjstatus` with `cargo build`. Then you are able to run the example configuration
-with `zellij -l plugin-dev-workspace.kdl` from the root of the repository.
-
-## 🤝 Contributing
-
-If you are missing features or find some annoying bugs please feel free to submit an issue or a bugfix within a pull request :)
-
-## 📝 License
-
-© 2024 Daniel Jankowski
-
-This project is licensed under the MIT license.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+- [Community showcase](https://github.com/dj95/zjstatus/discussions/44)
+- [Issue tracker](https://github.com/dj95/zjstatus/issues)
+- [MIT License](LICENSE)
