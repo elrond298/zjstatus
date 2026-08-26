@@ -11,7 +11,7 @@ mkdir -p "$dir"
 jq -n --argjson pid "$$" \
     --arg goal '重构自适应状态栏，确保长目标先截断再隐藏稳定区块，并完整保留中文内容' \
     --arg detail '完善👨‍👩‍👧‍👦任务详情截断并保留组合字符é，避免破坏终端显示' \
-    '{version: 2, pid: $pid, busy: true, instanceName: "debug", tool: "replace", subagents: [], goal: $goal, todo: {completed: 2, total: 3, active: 1, detail: $detail}}' \
+    '{version: 2, pid: $pid, busy: true, instanceName: "debug", mode: "plan", tool: "replace", subagents: [], goal: $goal, todo: {completed: 2, total: 3, active: 1, detail: $detail}}' \
     >"$dir/$$.json"
 
 XDG_RUNTIME_DIR="$runtime" ZELLIJ_SESSION_NAME="$session" panel='#24273A' \
@@ -34,6 +34,7 @@ def cells(text):
     )
 
 assert len(plain) == 8, plain
+assert all("π [debug] [PLAN]" in line for line in plain[:7]), plain
 assert all("󰘳" in line and "▶" in line for line in plain[:5]), plain
 for line, limit in zip(plain[1:5], (64, 40, 24, 12), strict=True):
     goal = line.split("󰘳 ", 1)[1]

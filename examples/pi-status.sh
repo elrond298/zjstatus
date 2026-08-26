@@ -76,6 +76,7 @@ jq -jrs '
         end;
     def instance($level; $limit):
         paint("#C6A0F6"; "π" + (if (.sessionName // .instanceName) then " [" + ((.sessionName // .instanceName) | clean) + "]" else "" end)) +
+        (if .mode == "plan" then paint("#C6A0F6"; " [PLAN]") else "" end) +
         (if .busy then paint("#EED49F"; " ●") else paint("#A6DA95"; " ○") end) +
         (if $level == "full" then
             (.todo | todo(true; $limit)) +
