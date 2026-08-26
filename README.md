@@ -148,11 +148,7 @@ keybinds {
 
 The idle hint row can be composed directly from arbitrary `command_<name>_*` widgets. List each command name in `hint_idle_left` or `hint_idle_right`; there is no intermediate alias. Each command prints one display variant per line, widest first, and a line containing exactly `@hide` hides it.
 
-The Pi example reuses `extensions/zellij-status.ts` from the `zellij-pi-dashboard` repository; zjstatus only reads its status files through [`examples/pi-status.sh`](examples/pi-status.sh). Link that extension into Pi, then restart Pi:
-
-```sh
-ln -sfn /path/to/zellij-pi-dashboard/extensions/zellij-status.ts ~/.pi/agent/extensions/zellij-status.ts
-```
+The included VCS, Pi, and host-load examples are documented in [Status script examples](docs/status-scripts.md), including setup, dependencies, symbols, configuration, and every responsive variant.
 
 ```kdl
 hint_idle_left         "vcs pi"
@@ -183,8 +179,6 @@ idle status
 ```
 
 Read `hint_idle_shrink_order` from left to right. Every occurrence of a name advances that command to its next output line. The example compacts VCS once, progressively truncates Pi goal/todo details four times, removes Load and the remaining VCS detail, then reduces Pi to progress, state, and aggregate forms. This prevents a long Pi detail from evicting stable VCS/Load information before trying shorter text. When the row is too wide, zjstatus follows this sequence until it fits.
-
-[`pi-status.sh`](examples/pi-status.sh) emits full details followed by grapheme-safe 64-, 40-, 24-, and 12-terminal-column detail limits. Only after 12 columns becomes too short does it remove goal/active-todo text, while preserving todo progress, then Pi state, then the aggregate count. The dashboard producer asynchronously summarizes goals wider than 48 terminal columns to at most 48 columns; shorter goals stay verbatim, and the script still truncates raw goals while summarization is pending or unavailable.
 
 Missing and blank output lines inherit the previous valid level; lines beyond the number of configured transitions are ignored; a level that would grow wider keeps the prior level. Commands omitted from the shrink order remain at their first variant. Names must refer directly to configured `command_<name>_command` widgets, and one command cannot appear on both sides.
 
