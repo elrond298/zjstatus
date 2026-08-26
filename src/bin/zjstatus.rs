@@ -75,6 +75,7 @@ struct State {
     hint_dismissed: bool,
     hint_reveal_at: Option<Instant>,
     hint_dismiss_at: Option<Instant>,
+    next_refresh_at: Option<Instant>,
     hint_ignore_input_until: Option<Instant>,
     hint_page: usize,
     hint_page_count: usize,
@@ -132,8 +133,6 @@ impl ZellijPlugin for State {
             EventType::RunCommandResult,
             EventType::CwdChanged,
         ]);
-        set_timeout(REFRESH_INTERVAL_SECONDS);
-
         self.module_config = match ModuleConfig::new(&configuration) {
             Ok(mc) => mc,
             Err(e) => {
@@ -174,6 +173,7 @@ impl ZellijPlugin for State {
         self.hint_dismissed = false;
         self.hint_reveal_at = None;
         self.hint_dismiss_at = None;
+        self.next_refresh_at = None;
         self.hint_ignore_input_until = None;
         self.hint_page = 0;
         self.hint_page_count = 1;
@@ -194,6 +194,9 @@ impl ZellijPlugin for State {
             focused_pane_id: None,
             focused_pane_cwd: None,
         };
+        if self.refresh_due(Instant::now()) {
+            set_timeout(REFRESH_INTERVAL_SECONDS);
+        }
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
@@ -308,6 +311,17 @@ impl State {
             self.hint_reveal_at = Some(now + HINT_DELAY);
             set_timeout(HINT_DELAY.as_secs_f64());
         }
+    }
+
+    fn refresh_due(&mut self, now: Instant) -> bool {
+        if self
+            .next_refresh_at
+            .is_some_and(|refresh_at| now < refresh_at)
+        {
+            return false;
+        }
+        self.next_refresh_at = Some(now + Duration::from_secs_f64(REFRESH_INTERVAL_SECONDS));
+        true
     }
 
     fn update_hint_timers(&mut self) -> bool {
@@ -655,7 +669,9 @@ impl State {
             }
             Event::Timer(_) => {
                 tracing::Span::current().record("event_type", "Event::Timer");
-                set_timeout(REFRESH_INTERVAL_SECONDS);
+                if self.refresh_due(Instant::now()) {
+                    set_timeout(REFRESH_INTERVAL_SECONDS);
+                }
                 self.update_hint_timers();
                 self.state.cache_mask = 0;
 
@@ -1125,6 +1141,20 @@ fn register_widgets(configuration: &BTreeMap<String, String>) -> BTreeMap<String
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn stale_hint_timers_do_not_rearm_periodic_refresh() {
+        let start = Instant::now();
+        let mut state = State::default();
+
+        assert!(state.refresh_due(start));
+        assert!(!state.refresh_due(start + HINT_DELAY));
+
+        let delayed_refresh =
+            start + Duration::from_secs_f64(REFRESH_INTERVAL_SECONDS) + HINT_DELAY;
+        assert!(state.refresh_due(delayed_refresh));
+        assert!(!state.refresh_due(delayed_refresh + HINT_DISMISS_DELAY));
+    }
 
     #[test]
     fn set_focused_pane_cwd_only_invalidates_on_change() {
