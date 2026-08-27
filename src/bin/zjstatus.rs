@@ -33,6 +33,10 @@ const REFRESH_INTERVAL_SECONDS: f64 = 1.0;
 const HINT_DELAY: Duration = Duration::from_millis(500);
 const HINT_DISMISS_DELAY: Duration = Duration::from_millis(20);
 
+fn is_refresh_timer(seconds: f64) -> bool {
+    seconds == REFRESH_INTERVAL_SECONDS
+}
+
 #[derive(Clone)]
 struct HintFormats {
     mode: FormattedPart,
@@ -405,6 +409,9 @@ impl State {
     }
 
     fn hint_line(&mut self, cols: usize) -> String {
+        if !self.hint_visible || !shows_hints(&self.state.mode.mode) {
+            return self.idle_line(cols);
+        }
         let mode = format!("{:?}", self.state.mode.mode).to_uppercase();
         let hint_sizes = self
             .keybinds
@@ -428,9 +435,6 @@ impl State {
         let pages = hint_pages(&self.state.mode.mode, &self.keybinds, content_width);
         self.hint_page_count = pages.len().max(1);
         self.hint_page %= self.hint_page_count;
-        if !self.hint_visible || !shows_hints(&self.state.mode.mode) {
-            return self.idle_line(cols);
-        }
         let Some(formats) = &self.hint_formats else {
             return String::new();
         };
@@ -667,15 +671,14 @@ impl State {
 
                 should_render = true;
             }
-            Event::Timer(_) => {
+            Event::Timer(seconds) => {
                 tracing::Span::current().record("event_type", "Event::Timer");
-                if self.refresh_due(Instant::now()) {
+                let refresh = is_refresh_timer(seconds) && self.refresh_due(Instant::now());
+                if refresh {
                     set_timeout(REFRESH_INTERVAL_SECONDS);
+                    self.state.cache_mask = 0;
                 }
-                self.update_hint_timers();
-                self.state.cache_mask = 0;
-
-                should_render = true;
+                should_render = refresh || self.update_hint_timers();
             }
             _ => (),
         };
@@ -1154,6 +1157,13 @@ mod test {
             start + Duration::from_secs_f64(REFRESH_INTERVAL_SECONDS) + HINT_DELAY;
         assert!(state.refresh_due(delayed_refresh));
         assert!(!state.refresh_due(delayed_refresh + HINT_DISMISS_DELAY));
+    }
+
+    #[test]
+    fn hint_timeouts_do_not_start_refresh_loops() {
+        assert!(is_refresh_timer(REFRESH_INTERVAL_SECONDS));
+        assert!(!is_refresh_timer(HINT_DELAY.as_secs_f64()));
+        assert!(!is_refresh_timer(HINT_DISMISS_DELAY.as_secs_f64()));
     }
 
     #[test]
