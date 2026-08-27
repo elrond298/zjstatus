@@ -5,6 +5,7 @@ pub struct FrameConfig {
     pub hide_frames_except_for_search: bool,
     pub hide_frames_except_for_fullscreen: bool,
     pub hide_frames_except_for_scroll: bool,
+    pub frame_style: PaneFrameStyle,
 }
 
 impl FrameConfig {
@@ -13,12 +14,20 @@ impl FrameConfig {
         hide_frames_except_for_search: bool,
         hide_frames_except_for_fullscreen: bool,
         hide_frames_except_for_scroll: bool,
+        pane_frame_style: &str,
     ) -> Self {
+        let frame_style = match pane_frame_style {
+            "full" => PaneFrameStyle::Full,
+            "titles" => PaneFrameStyle::Titles,
+            _ => PaneFrameStyle::Titles,
+        };
+
         Self {
             hide_frames_for_single_pane,
             hide_frames_except_for_search,
             hide_frames_except_for_fullscreen,
             hide_frames_except_for_scroll,
+            frame_style,
         }
     }
 
@@ -64,10 +73,10 @@ pub fn hide_frames_conditionally(
         .collect();
 
     tracing::debug!("panes: {:?}", panes);
-    let frame_enabled = panes
+    let mut frame_enabled = panes
         .iter()
         .filter(|&&p| !p.is_suppressed)
-        .any(|p| p.pane_content_x - p.pane_x > 0);
+        .any(|p| p.pane_content_y > p.pane_y);
 
     let frames_for_search =
         config.hide_frames_except_for_search && should_show_frames_for_search(mode_info);
@@ -87,11 +96,24 @@ pub fn hide_frames_conditionally(
         frame_enabled,
     );
 
+    if frame_enabled && let PaneFrameStyle::Full = config.frame_style {
+        let full_frames = panes
+            .iter()
+            .filter(|&&p| !p.is_suppressed)
+            .any(|p| p.pane_content_x > p.pane_x);
+
+        if !full_frames {
+            frame_enabled = false;
+        }
+    }
+
     if (frames_for_search || frames_for_fullscreen || frames_for_single_pane || frames_for_scroll)
         && !frame_enabled
     {
         tracing::debug!("activate");
-        toggle_pane_frames();
+
+        tracing::debug!("style: {:?}", config.frame_style);
+        set_pane_frame_style(config.frame_style);
     }
 
     if (!frames_for_search
@@ -101,7 +123,7 @@ pub fn hide_frames_conditionally(
         && frame_enabled
     {
         tracing::debug!("deactivate");
-        toggle_pane_frames();
+        set_pane_frame_style(PaneFrameStyle::None);
     }
 }
 

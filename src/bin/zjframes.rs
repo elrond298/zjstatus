@@ -21,6 +21,7 @@ struct State {
     hide_frame_except_for_search: bool,
     hide_frame_except_for_fullscreen: bool,
     hide_frame_except_for_scroll: bool,
+    pane_frame_style: String,
 
     err: Option<anyhow::Error>,
 }
@@ -80,11 +81,15 @@ impl ZellijPlugin for State {
                 Some(toggle) => toggle == "true",
                 None => false,
             };
-        self.hide_frame_except_for_scroll=
-            match configuration.get("hide_frame_except_for_scroll") {
-                Some(toggle) => toggle == "true",
-                None => false,
-            };
+        self.hide_frame_except_for_scroll = match configuration.get("hide_frame_except_for_scroll")
+        {
+            Some(toggle) => toggle == "true",
+            None => false,
+        };
+        self.pane_frame_style = match configuration.get("pane_frame_style") {
+            Some(style) => style.to_owned(),
+            None => "titles".to_owned(),
+        };
 
         self.pending_events = Vec::new();
         self.got_permissions = false;
@@ -147,6 +152,7 @@ impl State {
                         self.hide_frame_except_for_search,
                         self.hide_frame_except_for_fullscreen,
                         self.hide_frame_except_for_scroll,
+                        &self.pane_frame_style,
                     ),
                     &self.state.tabs,
                     &self.state.panes,
@@ -167,6 +173,7 @@ impl State {
                         self.hide_frame_except_for_search,
                         self.hide_frame_except_for_fullscreen,
                         self.hide_frame_except_for_scroll,
+                        &self.pane_frame_style,
                     ),
                     &self.state.tabs,
                     &self.state.panes,
@@ -193,6 +200,7 @@ impl State {
                             self.hide_frame_except_for_search,
                             self.hide_frame_except_for_fullscreen,
                             self.hide_frame_except_for_scroll,
+                            &self.pane_frame_style,
                         ),
                         &current_session.tabs,
                         &current_session.panes,
