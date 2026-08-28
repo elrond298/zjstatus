@@ -1102,7 +1102,7 @@ mod test {
     }
 
     #[test]
-    fn responsive_levels_reach_tab_locator_for_long_names() {
+    fn responsive_levels_show_navigation_for_long_names() {
         let config = [
             ("format_shrink_levels", "compact minimal"),
             ("format_shrink_order", "right center left"),
@@ -1144,8 +1144,9 @@ mod test {
         };
 
         let output = module.select_bar_output(&state, &widgets);
-        assert_eq!(output.levels, [3, 3, 3]);
-        assert_eq!(output.left, "<- 2 ->");
+        assert_eq!(output.levels, [2, 2, 2]);
+        assert!(output.left.starts_with("<- "));
+        assert!(output.left.ends_with(" ->"));
     }
 
     #[test]

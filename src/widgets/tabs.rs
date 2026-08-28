@@ -169,8 +169,9 @@ impl Widget for TabsWidget {
 
 impl TabsWidget {
     fn render_at_level(&self, state: &ZellijState, level: usize) -> String {
-        if level == 1 && self.tab_display_count == Some(1) {
-            return self.render_active_index(state, false);
+        if (level == 1 && self.tab_display_count == Some(1)) || (level == 2 && state.tabs.len() > 1)
+        {
+            return self.render_active_tab_with_navigation(state);
         }
 
         if level >= 3 {
@@ -209,7 +210,8 @@ impl TabsWidget {
     }
 
     fn click_at_level(&self, state: &ZellijState, pos: usize, level: usize) {
-        if level == 1 && self.tab_display_count == Some(1) {
+        if (level == 1 && self.tab_display_count == Some(1)) || (level == 2 && state.tabs.len() > 1)
+        {
             return;
         }
 
@@ -286,6 +288,35 @@ impl TabsWidget {
             }
             _ => active_tab_window(&state.tabs),
         }
+    }
+
+    fn render_active_tab_with_navigation(&self, state: &ZellijState) -> String {
+        let Some((active_index, active_tab)) =
+            state.tabs.iter().enumerate().find(|(_, tab)| tab.active)
+        else {
+            return String::new();
+        };
+        let left_arrow = if active_index > 0 { "<- " } else { "" };
+        let right_arrow = if active_index + 1 < state.tabs.len() {
+            " ->"
+        } else {
+            ""
+        };
+        let mut active_tab = active_tab.clone();
+        if state.cols > 0 {
+            let arrow_width =
+                console::measure_text_width(left_arrow) + console::measure_text_width(right_arrow);
+            active_tab.name = console::truncate_str(
+                &active_tab.name,
+                state.cols.saturating_sub(arrow_width),
+                "…",
+            )
+            .into_owned();
+        }
+        format!(
+            "{left_arrow}{}{right_arrow}",
+            self.render_tab(&active_tab, &state.panes, &state.mode)
+        )
     }
 
     fn render_active_index(&self, state: &ZellijState, index_only: bool) -> String {
@@ -919,7 +950,11 @@ mod test {
 
     #[test]
     fn single_tab_level_shows_navigation_indicator() {
-        let config = BTreeMap::from([("tab_display_count".to_owned(), "1".to_owned())]);
+        let config = BTreeMap::from([
+            ("tab_display_count".to_owned(), "1".to_owned()),
+            ("tab_active".to_owned(), "{name}".to_owned()),
+            ("tab_normal".to_owned(), "{name}".to_owned()),
+        ]);
         let widget = TabsWidget::new(&config);
         let state = ZellijState {
             tabs: vec![
@@ -930,6 +965,7 @@ mod test {
                 TabInfo {
                     position: 1,
                     active: true,
+                    name: "two".to_owned(),
                     ..Default::default()
                 },
                 TabInfo {
@@ -940,7 +976,7 @@ mod test {
             ..Default::default()
         };
 
-        assert_eq!(widget.process_at_level("tabs", &state, 1), "<- 2 ->");
+        assert_eq!(widget.process_at_level("tabs", &state, 1), "<- two ->");
     }
 
     #[test]
