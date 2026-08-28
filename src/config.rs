@@ -861,9 +861,12 @@ fn responsive_formats(
         }
         formats.push(parts_from_config(Some(&current), config));
     }
+    // Tabs reserve levels 3 and 4 for the full and compact locators.
+    while formats.len() < 5 {
+        formats.push(parts_from_config(Some(&current), config));
+    }
     formats
 }
-
 fn parts_from_config(
     format: Option<&String>,
     config: &BTreeMap<String, String>,
@@ -1096,6 +1099,53 @@ mod test {
         let unnamed = BTreeMap::from([("format_left_compact".to_owned(), "compact".to_owned())]);
         let error = ModuleConfig::new(&unnamed).err().unwrap().to_string();
         assert!(error.contains("requires format_shrink_levels"));
+    }
+
+    #[test]
+    fn responsive_levels_reach_tab_locator_for_long_names() {
+        let config = [
+            ("format_shrink_levels", "compact minimal"),
+            ("format_shrink_order", "right center left"),
+            ("format_left", "{tabs}"),
+            ("format_center", ""),
+            ("format_right", ""),
+            ("tab_active", "{name}"),
+            ("tab_normal", "{name}"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect::<BTreeMap<_, _>>();
+        let mut module = ModuleConfig::new(&config).unwrap();
+        let widgets = BTreeMap::from([(
+            "tabs".to_owned(),
+            Arc::new(TabsWidget::new(&config)) as Arc<dyn Widget>,
+        )]);
+        let state = ZellijState {
+            cols: 8,
+            tabs: vec![
+                TabInfo {
+                    position: 0,
+                    name: "a very long tab".to_owned(),
+                    ..Default::default()
+                },
+                TabInfo {
+                    position: 1,
+                    name: "another very long tab".to_owned(),
+                    active: true,
+                    ..Default::default()
+                },
+                TabInfo {
+                    position: 2,
+                    name: "yet another very long tab".to_owned(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let output = module.select_bar_output(&state, &widgets);
+        assert_eq!(output.levels, [3, 3, 3]);
+        assert_eq!(output.left, "<- 2 ->");
     }
 
     #[test]
