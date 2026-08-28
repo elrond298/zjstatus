@@ -169,12 +169,14 @@ impl Widget for TabsWidget {
 
 impl TabsWidget {
     fn render_at_level(&self, state: &ZellijState, level: usize) -> String {
-        if level == 3 && state.tabs.len() > 1 {
-            return self.render_active_tab_with_navigation(state);
+        if level == 1 {
+            return self.render_active_tab_with_navigation(state, false);
         }
-
-        if level >= 4 {
-            return self.render_active_index(state, level >= 5);
+        if level == 2 {
+            return self.render_active_tab_with_navigation(state, true);
+        }
+        if level >= 3 {
+            return self.render_active_index(state, level >= 4);
         }
 
         let (truncated_start, truncated_end, tabs) = self.tab_window_at_level(state, level);
@@ -209,10 +211,7 @@ impl TabsWidget {
     }
 
     fn click_at_level(&self, state: &ZellijState, pos: usize, level: usize) {
-        if level == 3 && state.tabs.len() > 1 {
-            return;
-        }
-        if level >= 4 {
+        if level >= 1 {
             return;
         }
 
@@ -285,7 +284,11 @@ impl TabsWidget {
         }
     }
 
-    fn render_active_tab_with_navigation(&self, state: &ZellijState) -> String {
+    fn render_active_tab_with_navigation(
+        &self,
+        state: &ZellijState,
+        truncate_name: bool,
+    ) -> String {
         let Some((active_index, active_tab)) =
             state.tabs.iter().enumerate().find(|(_, tab)| tab.active)
         else {
@@ -298,7 +301,7 @@ impl TabsWidget {
             ""
         };
         let mut active_tab = active_tab.clone();
-        if state.cols > 0 {
+        if truncate_name && state.cols > 0 {
             let arrow_width =
                 console::measure_text_width(left_arrow) + console::measure_text_width(right_arrow);
             active_tab.name = console::truncate_str(
@@ -971,9 +974,7 @@ mod test {
             ..Default::default()
         };
 
-        let (_, _, tabs) = widget.tab_window_at_level(&state, 1);
-        assert_eq!(tabs.len(), 2);
-        assert!(tabs.iter().any(|tab| tab.active));
+        assert_eq!(widget.process_at_level("tabs", &state, 1), "<- two ->");
     }
 
     #[test]
@@ -1011,9 +1012,8 @@ mod test {
 
         let active_name = widget.process_at_level("tabs", &state, 2);
         assert!(active_name.contains("two"));
-        assert!(active_name.contains("<1>"));
-        assert_eq!(widget.process_at_level("tabs", &state, 3), "<- two ->");
-        assert_eq!(widget.process_at_level("tabs", &state, 4), "<- 2 ->");
-        assert_eq!(widget.process_at_level("tabs", &state, 5), "2");
+        assert_eq!(widget.process_at_level("tabs", &state, 2), "<- two ->");
+        assert_eq!(widget.process_at_level("tabs", &state, 3), "<- 2 ->");
+        assert_eq!(widget.process_at_level("tabs", &state, 4), "2");
     }
 }

@@ -25,7 +25,7 @@ A missing variant inherits the previous valid one. An empty variant is an intent
 
 ## Narrow-width priorities
 
-The renderer measures terminal display cells, not bytes. It preserves a non-empty notification and an active-tab position locator as long as possible. Notifications temporarily outrank persistent status fields. Tabs progressively retain nearby context, then the active tab, then a position locator, before the bar falls back to its smallest valid form.
+The renderer measures terminal display cells, not bytes. It preserves a non-empty notification and an active-tab position locator as long as possible. Notifications temporarily outrank persistent status fields. Tabs use their own fallback sequence: the configured window, one active tab with arrows, a truncated active-tab name with arrows, the full position locator, then its compact index.
 
 When responsive fallback synthesizes a notification or collapses to a minimum layout, it disables mouse hit testing because the visible position no longer maps reliably to the original widget. Normal fitting responsive stages preserve click handling.
 
