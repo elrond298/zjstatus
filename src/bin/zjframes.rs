@@ -80,11 +80,11 @@ impl ZellijPlugin for State {
                 Some(toggle) => toggle == "true",
                 None => false,
             };
-        self.hide_frame_except_for_scroll=
-            match configuration.get("hide_frame_except_for_scroll") {
-                Some(toggle) => toggle == "true",
-                None => false,
-            };
+        self.hide_frame_except_for_scroll = match configuration.get("hide_frame_except_for_scroll")
+        {
+            Some(toggle) => toggle == "true",
+            None => false,
+        };
 
         self.pending_events = Vec::new();
         self.got_permissions = false;
