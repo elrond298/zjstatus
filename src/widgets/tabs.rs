@@ -169,8 +169,7 @@ impl Widget for TabsWidget {
 
 impl TabsWidget {
     fn render_at_level(&self, state: &ZellijState, level: usize) -> String {
-        if (level == 1 && self.tab_display_count == Some(1)) || (level == 2 && state.tabs.len() > 1)
-        {
+        if level == 2 && state.tabs.len() > 1 {
             return self.render_active_tab_with_navigation(state);
         }
 
@@ -210,8 +209,7 @@ impl TabsWidget {
     }
 
     fn click_at_level(&self, state: &ZellijState, pos: usize, level: usize) {
-        if (level == 1 && self.tab_display_count == Some(1)) || (level == 2 && state.tabs.len() > 1)
-        {
+        if level == 2 && state.tabs.len() > 1 {
             return;
         }
 
@@ -278,13 +276,10 @@ impl TabsWidget {
             1 => {
                 let count = self
                     .tab_display_count
+                    .map(|count| count.saturating_sub(1))
                     .unwrap_or(state.tabs.len())
                     .clamp(1, 3);
-                if count <= 1 {
-                    active_tab_window(&state.tabs)
-                } else {
-                    get_tab_window(&state.tabs, Some(count))
-                }
+                get_tab_window(&state.tabs, Some(count))
             }
             _ => active_tab_window(&state.tabs),
         }
@@ -949,9 +944,9 @@ mod test {
     }
 
     #[test]
-    fn single_tab_level_shows_navigation_indicator() {
+    fn responsive_level_reduces_tab_window_before_active_name() {
         let config = BTreeMap::from([
-            ("tab_display_count".to_owned(), "1".to_owned()),
+            ("tab_display_count".to_owned(), "3".to_owned()),
             ("tab_active".to_owned(), "{name}".to_owned()),
             ("tab_normal".to_owned(), "{name}".to_owned()),
         ]);
@@ -976,7 +971,9 @@ mod test {
             ..Default::default()
         };
 
-        assert_eq!(widget.process_at_level("tabs", &state, 1), "<- two ->");
+        let (_, _, tabs) = widget.tab_window_at_level(&state, 1);
+        assert_eq!(tabs.len(), 2);
+        assert!(tabs.iter().any(|tab| tab.active));
     }
 
     #[test]
