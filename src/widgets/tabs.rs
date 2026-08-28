@@ -176,9 +176,24 @@ impl TabsWidget {
             return self.render_active_index(state, level >= 4);
         }
 
-        let (truncated_start, truncated_end, tabs) = self.tab_window_at_level(state, level);
-        let mut output = String::new();
+        if level == 1 {
+            let count = self.tab_level_one_count(state);
+            return if count == 1 {
+                self.render_active_tab_with_navigation(state, false)
+            } else {
+                self.render_tab_window(state, count)
+            };
+        }
+        if level == 0 {
+            return self
+                .render_tab_window(state, self.tab_display_count.unwrap_or(state.tabs.len()));
+        }
+        String::new()
+    }
 
+    fn render_tab_window(&self, state: &ZellijState, count: usize) -> String {
+        let (truncated_start, truncated_end, tabs) = get_tab_window(&state.tabs, Some(count));
+        let mut output = String::new();
         if truncated_start > 0 {
             for part in &self.tab_truncate_start_format {
                 let content = part
@@ -187,7 +202,6 @@ impl TabsWidget {
                 output.push_str(&part.format_string(&content));
             }
         }
-
         for (index, tab) in tabs.iter().enumerate() {
             output.push_str(&self.render_tab(tab, &state.panes, &state.mode));
             if index + 1 < tabs.len()
@@ -196,20 +210,18 @@ impl TabsWidget {
                 output.push_str(&separator.format_string(&separator.content));
             }
         }
-
         if truncated_end > 0 {
             for part in &self.tab_truncate_end_format {
                 let content = part.content.replace("{count}", &truncated_end.to_string());
                 output.push_str(&part.format_string(&content));
             }
         }
-
         output
     }
 
     fn click_at_level(&self, state: &ZellijState, pos: usize, level: usize) {
-        if level == 2 {
-            self.click_active_tab_with_navigation(state, pos, true);
+        if level == 2 || (level == 1 && self.tab_level_one_count(state) == 1) {
+            self.click_active_tab_with_navigation(state, pos, level == 2);
             return;
         }
 
@@ -287,6 +299,22 @@ impl TabsWidget {
         }
     }
 
+    fn tab_level_one_count(&self, state: &ZellijState) -> usize {
+        let max_count = self
+            .tab_display_count
+            .map(|count| count.saturating_sub(1))
+            .unwrap_or(state.tabs.len())
+            .clamp(1, 3);
+        (1..=max_count)
+            .rev()
+            .find(|count| {
+                state.cols == 0
+                    || console::measure_text_width(&self.render_tab_window(state, *count))
+                        <= state.cols
+            })
+            .unwrap_or(1)
+    }
+
     fn tab_window_at_level(
         &self,
         state: &ZellijState,
@@ -294,14 +322,7 @@ impl TabsWidget {
     ) -> (usize, usize, Vec<TabInfo>) {
         match level {
             0 => get_tab_window(&state.tabs, self.tab_display_count),
-            1 => {
-                let count = self
-                    .tab_display_count
-                    .map(|count| count.saturating_sub(1))
-                    .unwrap_or(state.tabs.len())
-                    .clamp(1, 3);
-                get_tab_window(&state.tabs, Some(count))
-            }
+            1 => get_tab_window(&state.tabs, Some(self.tab_level_one_count(state))),
             2 => get_tab_window(&state.tabs, Some(2)),
             _ => active_tab_window(&state.tabs),
         }
