@@ -64,6 +64,7 @@ struct BarOutput {
     center: String,
     right: String,
     levels: [usize; 3],
+    width_budgets: [Option<usize>; 3],
     clicks_disabled: bool,
 }
 
@@ -177,6 +178,7 @@ impl ModuleConfig {
         } else {
             BTreeMap::new()
         };
+        validate_widget_region(&responsive_parts, "tabs")?;
         let notification_show_interval = config
             .get("notification_show_interval")
             .and_then(|value| value.parse::<i64>().ok())
@@ -220,6 +222,7 @@ impl ModuleConfig {
                 center: render_parts(&mut self.center_parts, widget_map, state, 0),
                 right: render_parts(&mut self.right_parts, widget_map, state, 0),
                 levels: [0; 3],
+                width_budgets: [None; 3],
                 clicks_disabled: false,
             };
             if self.hide_on_overlength {
@@ -271,13 +274,14 @@ impl ModuleConfig {
                 )
             });
         let mut clicks_disabled = false;
-        let left = render_parts(
+        let mut width_budgets = [None; 3];
+        let mut left = render_parts(
             &mut self.responsive_parts.get_mut(&Part::Left).unwrap()[levels[0]],
             widget_map,
             state,
             levels[0],
         );
-        let center = render_parts(
+        let mut center = render_parts(
             &mut self.responsive_parts.get_mut(&Part::Center).unwrap()[levels[1]],
             widget_map,
             state,
@@ -289,6 +293,7 @@ impl ModuleConfig {
             state,
             levels[2],
         );
+        let configured_right = right.clone();
         if self.notification_visible(state)
             && self.configured_widget_region("notifications").is_some()
             && !notification_is_rendered
@@ -301,11 +306,43 @@ impl ModuleConfig {
                 clicks_disabled = true;
             }
         }
+        if let Some(tab_region) = self.widget_region_at("tabs", levels)
+            && levels[tab_region.index()] == 1
+            && let Some(tabs) = widget_map.get("tabs")
+        {
+            let region_width = match tab_region {
+                Part::Left => console::measure_text_width(&left),
+                Part::Center => console::measure_text_width(&center),
+                Part::Right => console::measure_text_width(&right),
+            };
+            let tab_width = console::measure_text_width(&tabs.process_at_level("tabs", state, 1));
+            let fixed_width = region_width.saturating_sub(tab_width);
+            let region_budget = max_region_width(tab_region, &left, &center, &right, state.cols);
+            let mut tab_state = state.clone();
+            tab_state.cols = region_budget.saturating_sub(fixed_width);
+            width_budgets[tab_region.index()] = Some(tab_state.cols);
+            let index = tab_region.index();
+            let rendered = render_parts(
+                &mut self.responsive_parts.get_mut(&tab_region).unwrap()[levels[index]],
+                widget_map,
+                &tab_state,
+                levels[index],
+            );
+            match tab_region {
+                Part::Left => left = rendered,
+                Part::Center => center = rendered,
+                Part::Right => {
+                    let prefix = right.strip_suffix(&configured_right).unwrap_or_default();
+                    right = prefix.to_owned() + &rendered;
+                }
+            }
+        }
         BarOutput {
             left,
             center,
             right,
             levels,
+            width_budgets,
             clicks_disabled,
         }
     }
@@ -319,6 +356,14 @@ impl ModuleConfig {
                         .iter()
                         .any(|parts| parts_contain_widget(parts, widget))
                 })
+            })
+    }
+
+    fn widget_region_at(&self, widget: &str, levels: [usize; 3]) -> Option<Part> {
+        [Part::Left, Part::Center, Part::Right]
+            .into_iter()
+            .find(|part| {
+                parts_contain_widget(&self.responsive_parts[part][levels[part.index()]], widget)
             })
     }
 
@@ -449,16 +494,27 @@ impl ModuleConfig {
             center: output_center,
             right: output_right,
             levels,
+            width_budgets,
             ..
         } = output;
 
+        let state_with_budget = |budget| {
+            let mut adjusted = state.clone();
+            if let Some(cols) = budget {
+                adjusted.cols = cols;
+            }
+            adjusted
+        };
+        let left_state = state_with_budget(width_budgets[0]);
+        let center_state = state_with_budget(width_budgets[1]);
+        let right_state = state_with_budget(width_budgets[2]);
         let mut offset = console::measure_text_width(&output_left);
 
         self.process_widget_click(
             click_pos,
             self.parts_at(Part::Left, levels[0]),
             &widget_map,
-            &state,
+            &left_state,
             0,
             levels[0],
         );
@@ -479,7 +535,7 @@ impl ModuleConfig {
                 click_pos,
                 self.parts_at(Part::Center, levels[1]),
                 &widget_map,
-                &state,
+                &center_state,
                 offset,
                 levels[1],
             );
@@ -505,7 +561,7 @@ impl ModuleConfig {
             click_pos,
             self.parts_at(Part::Right, levels[2]),
             &widget_map,
-            &state,
+            &right_state,
             offset,
             levels[2],
         );
@@ -744,9 +800,43 @@ fn render_parts(
     })
 }
 
+fn validate_widget_region(
+    responsive_parts: &BTreeMap<Part, Vec<Vec<FormattedPart>>>,
+    widget: &str,
+) -> anyhow::Result<()> {
+    let regions = [Part::Left, Part::Center, Part::Right]
+        .into_iter()
+        .filter(|part| {
+            responsive_parts.get(part).is_some_and(|levels| {
+                levels
+                    .iter()
+                    .any(|parts| parts_contain_widget(parts, widget))
+            })
+        })
+        .collect_vec();
+    if regions.len() > 1 {
+        anyhow::bail!("{{{widget}}} must remain in one region across format shrink levels");
+    }
+    Ok(())
+}
+
 fn parts_contain_widget(parts: &[FormattedPart], widget: &str) -> bool {
     let token = format!("{{{widget}}}");
     parts.iter().any(|part| part.content.contains(&token))
+}
+
+fn max_region_width(part: Part, left: &str, center: &str, right: &str, cols: usize) -> usize {
+    (0..=cols)
+        .rev()
+        .find(|width| {
+            let candidate = "x".repeat(*width);
+            match part {
+                Part::Left => bar_outputs_fit(&candidate, center, right, cols),
+                Part::Center => bar_outputs_fit(left, &candidate, right, cols),
+                Part::Right => bar_outputs_fit(left, center, &candidate, cols),
+            }
+        })
+        .unwrap_or_default()
 }
 
 fn bar_outputs_fit(left: &str, center: &str, right: &str, cols: usize) -> bool {
@@ -1147,6 +1237,99 @@ mod test {
         assert_eq!(output.levels, [2, 2, 2]);
         assert!(output.left.starts_with("<- "));
         assert!(output.left.ends_with(" ->"));
+    }
+
+    #[test]
+    fn responsive_tabs_use_the_space_left_by_other_regions() {
+        let config = [
+            ("format_shrink_levels", "compact minimal locator tiny"),
+            ("format_shrink_order", "right center left"),
+            ("format_left", ""),
+            ("format_center", "{tabs}"),
+            ("format_right", "clock"),
+            ("format_right_compact", "clock"),
+            ("format_right_minimal", "clock"),
+            ("format_right_locator", "clock"),
+            ("format_right_tiny", "{notifications}"),
+            ("notification_format_unread", "{message}"),
+            ("notification_show_interval", "60"),
+            ("tab_display_count", "4"),
+            ("tab_normal", "{name}"),
+            ("tab_active", "{name}"),
+            ("tab_separator", " "),
+            ("tab_truncate_start_format", "<"),
+            ("tab_truncate_end_format", ">"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect::<BTreeMap<_, _>>();
+        let mut module = ModuleConfig::new(&config).unwrap();
+        let widgets = BTreeMap::<String, Arc<dyn Widget>>::from([
+            (
+                "tabs".to_owned(),
+                Arc::new(TabsWidget::new(&config)) as Arc<dyn Widget>,
+            ),
+            (
+                "notifications".to_owned(),
+                Arc::new(NotificationWidget::new(&config)) as Arc<dyn Widget>,
+            ),
+        ]);
+        let state = ZellijState {
+            cols: 18,
+            tabs: vec![
+                TabInfo {
+                    position: 0,
+                    name: "a".to_owned(),
+                    ..Default::default()
+                },
+                TabInfo {
+                    position: 1,
+                    name: "b".to_owned(),
+                    active: true,
+                    ..Default::default()
+                },
+                TabInfo {
+                    position: 2,
+                    name: "c".to_owned(),
+                    ..Default::default()
+                },
+            ],
+            incoming_notification: Some(notification::Message {
+                body: "n".to_owned(),
+                received_at: Local::now(),
+            }),
+            ..Default::default()
+        };
+
+        let output = module.select_bar_output(&state, &widgets);
+        assert_eq!(output.levels, [0, 1, 1]);
+        assert!(output.center.contains('b'));
+        assert_ne!(output.center.contains('a'), output.center.contains('c'));
+        assert!(output.right.contains('n'));
+        assert!(bar_outputs_fit(
+            &output.left,
+            &output.center,
+            &output.right,
+            state.cols
+        ));
+    }
+
+    #[test]
+    fn tabs_cannot_move_between_responsive_regions() {
+        let config = [
+            ("format_shrink_levels", "compact"),
+            ("format_shrink_order", "right center left"),
+            ("format_left", "{tabs}"),
+            ("format_left_compact", ""),
+            ("format_center", ""),
+            ("format_center_compact", "{tabs}"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect::<BTreeMap<_, _>>();
+
+        let error = ModuleConfig::new(&config).unwrap_err().to_string();
+        assert!(error.contains("{tabs} must remain in one region"));
     }
 
     #[test]

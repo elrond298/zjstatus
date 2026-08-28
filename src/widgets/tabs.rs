@@ -224,6 +224,12 @@ impl TabsWidget {
             self.click_active_tab_with_navigation(state, pos, level == 2);
             return;
         }
+        if level >= 3 {
+            if let Some(tab) = self.locator_navigation_target(state, pos, level >= 4) {
+                switch_tab_to(tab);
+            }
+            return;
+        }
 
         let (truncated_start, truncated_end, tabs) = self.tab_window_at_level(state, level);
         let Some(active_pos) = state
@@ -280,22 +286,13 @@ impl TabsWidget {
         pos: usize,
         truncate_name: bool,
     ) {
-        let Some(active_index) = state.tabs.iter().position(|tab| tab.active) else {
-            return;
-        };
-        let left_width = if active_index > 0 { 3 } else { 0 };
-        let right_width = if active_index + 1 < state.tabs.len() {
-            3
-        } else {
-            0
-        };
-        let total_width = console::measure_text_width(
-            &self.render_active_tab_with_navigation(state, truncate_name),
-        );
-        if active_index > 0 && pos < left_width {
-            switch_tab_to(state.tabs[active_index - 1].position as u32 + 1);
-        } else if right_width > 0 && pos >= total_width.saturating_sub(right_width) {
-            switch_tab_to(state.tabs[active_index + 1].position as u32 + 1);
+        let rendered = self.render_active_tab_with_navigation(state, truncate_name);
+        self.click_navigation(state, pos, console::measure_text_width(&rendered));
+    }
+
+    fn click_navigation(&self, state: &ZellijState, pos: usize, total_width: usize) {
+        if let Some(tab) = navigation_target(state, pos, total_width) {
+            switch_tab_to(tab);
         }
     }
 
@@ -389,6 +386,27 @@ impl TabsWidget {
             output.push_str(&part.format_string(&content));
             output
         })
+    }
+
+    fn locator_navigation_target(
+        &self,
+        state: &ZellijState,
+        pos: usize,
+        index_only: bool,
+    ) -> Option<u32> {
+        let (active_index, active_tab) =
+            state.tabs.iter().enumerate().find(|(_, tab)| tab.active)?;
+        let index = active_tab.position + usize::from(!self.tab_zero_based_index);
+        let left_target =
+            (active_index > 0).then(|| state.tabs[active_index - 1].position as u32 + 1);
+        let right_target = (active_index + 1 < state.tabs.len())
+            .then(|| state.tabs[active_index + 1].position as u32 + 1);
+        let format = if index_only {
+            &self.active_index_only_format
+        } else {
+            &self.active_index_format
+        };
+        locator_target_at(format, &index.to_string(), left_target, right_target, pos)
     }
 
     fn select_format(&self, info: &TabInfo, mode: &ModeInfo) -> &Vec<FormattedPart> {
@@ -558,6 +576,60 @@ impl TabsWidget {
     }
 }
 
+fn navigation_target(state: &ZellijState, pos: usize, total_width: usize) -> Option<u32> {
+    let active_index = state.tabs.iter().position(|tab| tab.active)?;
+    if active_index > 0 && pos < 3 {
+        return Some(state.tabs[active_index - 1].position as u32 + 1);
+    }
+    if active_index + 1 < state.tabs.len() && pos >= total_width.saturating_sub(3) {
+        return Some(state.tabs[active_index + 1].position as u32 + 1);
+    }
+    None
+}
+fn locator_target_at(
+    format: &[FormattedPart],
+    index: &str,
+    left_target: Option<u32>,
+    right_target: Option<u32>,
+    pos: usize,
+) -> Option<u32> {
+    let mut offset = 0;
+    for part in format {
+        let mut remaining = part.content.as_str();
+        loop {
+            let next = [
+                ("{index}", index, None),
+                ("{left_arrow}", "<- ", left_target),
+                ("{right_arrow}", " ->", right_target),
+            ]
+            .into_iter()
+            .filter_map(|(token, replacement, target)| {
+                remaining
+                    .find(token)
+                    .map(|start| (start, token, replacement, target))
+            })
+            .min_by_key(|(start, _, _, _)| *start);
+            let Some((start, token, replacement, target)) = next else {
+                offset += console::measure_text_width(remaining);
+                break;
+            };
+            offset += console::measure_text_width(&remaining[..start]);
+            let replacement = if target.is_some() || token == "{index}" {
+                replacement
+            } else {
+                ""
+            };
+            let width = console::measure_text_width(replacement);
+            if target.is_some() && pos >= offset && pos < offset + width {
+                return target;
+            }
+            offset += width;
+            remaining = &remaining[start + token.len()..];
+        }
+    }
+    None
+}
+
 pub fn get_tab_window(
     tabs: &Vec<TabInfo>,
     max_count: Option<usize>,
@@ -611,7 +683,7 @@ mod test {
 
     use zellij_tile::prelude::TabInfo;
 
-    use super::{TabsWidget, get_tab_window};
+    use super::{TabsWidget, get_tab_window, navigation_target};
     use crate::{config::ZellijState, widgets::widget::Widget};
     use rstest::rstest;
 
@@ -1059,5 +1131,56 @@ mod test {
         assert_eq!(widget.process_at_level("tabs", &state, 2), "<- two ->");
         assert_eq!(widget.process_at_level("tabs", &state, 3), "<- 2 ->");
         assert_eq!(widget.process_at_level("tabs", &state, 4), "2");
+    }
+
+    #[test]
+    fn navigation_clicks_follow_rendered_arrow_geometry() {
+        let state = ZellijState {
+            tabs: vec![
+                TabInfo {
+                    position: 0,
+                    ..Default::default()
+                },
+                TabInfo {
+                    position: 1,
+                    active: true,
+                    ..Default::default()
+                },
+                TabInfo {
+                    position: 2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(navigation_target(&state, 0, 9), Some(1));
+        assert_eq!(navigation_target(&state, 4, 9), None);
+        assert_eq!(navigation_target(&state, 8, 9), Some(3));
+
+        let reordered = TabsWidget::new(&BTreeMap::from([(
+            "tab_locator_format".to_owned(),
+            "{right_arrow}{index}{left_arrow}".to_owned(),
+        )]));
+        assert_eq!(
+            reordered.locator_navigation_target(&state, 0, false),
+            Some(3)
+        );
+        assert_eq!(
+            reordered.locator_navigation_target(&state, 6, false),
+            Some(1)
+        );
+
+        let compact = TabsWidget::new(&BTreeMap::from([(
+            "tab_locator_compact_format".to_owned(),
+            "{right_arrow}{index}".to_owned(),
+        )]));
+        assert_eq!(compact.locator_navigation_target(&state, 0, true), Some(3));
+
+        let omitted = TabsWidget::new(&BTreeMap::from([(
+            "tab_locator_format".to_owned(),
+            "{index}".to_owned(),
+        )]));
+        assert_eq!(omitted.locator_navigation_target(&state, 0, false), None);
     }
 }
