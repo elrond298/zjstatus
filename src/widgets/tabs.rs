@@ -169,6 +169,10 @@ impl Widget for TabsWidget {
 
 impl TabsWidget {
     fn render_at_level(&self, state: &ZellijState, level: usize) -> String {
+        if level == 1 && self.tab_display_count == Some(1) {
+            return self.render_active_index(state, false);
+        }
+
         if level >= 3 {
             return self.render_active_index(state, level >= 4);
         }
@@ -205,6 +209,10 @@ impl TabsWidget {
     }
 
     fn click_at_level(&self, state: &ZellijState, pos: usize, level: usize) {
+        if level == 1 && self.tab_display_count == Some(1) {
+            return;
+        }
+
         if level >= 3 {
             return;
         }
@@ -907,6 +915,32 @@ mod test {
         let res = get_tab_window(&tabs, max_count);
 
         assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn single_tab_level_shows_navigation_indicator() {
+        let config = BTreeMap::from([("tab_display_count".to_owned(), "1".to_owned())]);
+        let widget = TabsWidget::new(&config);
+        let state = ZellijState {
+            tabs: vec![
+                TabInfo {
+                    position: 0,
+                    ..Default::default()
+                },
+                TabInfo {
+                    position: 1,
+                    active: true,
+                    ..Default::default()
+                },
+                TabInfo {
+                    position: 2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(widget.process_at_level("tabs", &state, 1), "<- 2 ->");
     }
 
     #[test]
