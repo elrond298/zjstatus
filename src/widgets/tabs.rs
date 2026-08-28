@@ -169,9 +169,6 @@ impl Widget for TabsWidget {
 
 impl TabsWidget {
     fn render_at_level(&self, state: &ZellijState, level: usize) -> String {
-        if level == 1 {
-            return self.render_active_tab_with_navigation(state, false);
-        }
         if level == 2 {
             return self.render_active_tab_with_navigation(state, true);
         }
@@ -211,8 +208,8 @@ impl TabsWidget {
     }
 
     fn click_at_level(&self, state: &ZellijState, pos: usize, level: usize) {
-        if level == 1 || level == 2 {
-            self.click_active_tab_with_navigation(state, pos, level == 2);
+        if level == 2 {
+            self.click_active_tab_with_navigation(state, pos, true);
             return;
         }
 
@@ -1000,7 +997,9 @@ mod test {
             ..Default::default()
         };
 
-        assert_eq!(widget.process_at_level("tabs", &state, 1), "<- two ->");
+        let (_, _, tabs) = widget.tab_window_at_level(&state, 1);
+        assert_eq!(tabs.len(), 2);
+        assert!(tabs.iter().any(|tab| tab.active));
     }
 
     #[test]
@@ -1036,8 +1035,6 @@ mod test {
             ..Default::default()
         };
 
-        let active_name = widget.process_at_level("tabs", &state, 2);
-        assert!(active_name.contains("two"));
         assert_eq!(widget.process_at_level("tabs", &state, 2), "<- two ->");
         assert_eq!(widget.process_at_level("tabs", &state, 3), "<- 2 ->");
         assert_eq!(widget.process_at_level("tabs", &state, 4), "2");
