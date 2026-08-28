@@ -22,10 +22,11 @@ format_left_tiny     "{tabs}"
 Each name in `format_shrink_levels` creates `format_<region>_<level>` keys. `format_shrink_order` must contain left, center, and right exactly once. Regions complete the current synchronized compression round before any region advances to the next level.
 
 A missing variant inherits the previous valid one. An empty variant is an intentional empty output. Legacy `format_responsive`, `format_precedence`, and numeric suffix configuration is rejected; use named levels instead.
+The `{tabs}` widget may be hidden at a narrower level, but it must remain in the same left, center, or right region whenever it is present.
 
 ## Narrow-width priorities
 
-The renderer measures terminal display cells, not bytes. It preserves a non-empty notification and an active-tab position locator as long as possible. Notifications temporarily outrank persistent status fields. Tabs use their own fallback sequence: the configured window, one active tab with arrows, a truncated active-tab name with arrows, the full position locator, then its compact index.
+The renderer measures terminal display cells, not bytes. It preserves a non-empty notification and an active-tab position locator as long as possible. Notifications temporarily outrank persistent status fields. Tabs first reduce the visible window one tab at a time while retaining the active tab and fitting the space left by the other regions. They then fall back to the active tab with arrows, a truncated active-tab name with arrows, the full position locator, and finally its compact index.
 
 When responsive fallback synthesizes a notification or collapses to a minimum layout, it disables mouse hit testing because the visible position no longer maps reliably to the original widget. Normal fitting responsive stages preserve click handling.
 
