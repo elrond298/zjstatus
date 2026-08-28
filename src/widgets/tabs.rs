@@ -211,7 +211,8 @@ impl TabsWidget {
     }
 
     fn click_at_level(&self, state: &ZellijState, pos: usize, level: usize) {
-        if level >= 1 {
+        if level == 1 || level == 2 {
+            self.click_active_tab_with_navigation(state, pos, level == 2);
             return;
         }
 
@@ -261,6 +262,31 @@ impl TabsWidget {
                     switch_tab_to(cmp::min(active_pos + 1, state.tabs.len()) as u32);
                 }
             }
+        }
+    }
+
+    fn click_active_tab_with_navigation(
+        &self,
+        state: &ZellijState,
+        pos: usize,
+        truncate_name: bool,
+    ) {
+        let Some(active_index) = state.tabs.iter().position(|tab| tab.active) else {
+            return;
+        };
+        let left_width = if active_index > 0 { 3 } else { 0 };
+        let right_width = if active_index + 1 < state.tabs.len() {
+            3
+        } else {
+            0
+        };
+        let total_width = console::measure_text_width(
+            &self.render_active_tab_with_navigation(state, truncate_name),
+        );
+        if active_index > 0 && pos < left_width {
+            switch_tab_to(state.tabs[active_index - 1].position as u32 + 1);
+        } else if right_width > 0 && pos >= total_width.saturating_sub(right_width) {
+            switch_tab_to(state.tabs[active_index + 1].position as u32 + 1);
         }
     }
 
