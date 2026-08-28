@@ -331,7 +331,7 @@ impl ModuleConfig {
         let tab_region = self.configured_widget_region("tabs");
         let tab = tab_region
             .and_then(|_| widget_map.get("tabs"))
-            .map(|tabs| tabs.process_at_level("tabs", state, 5))
+            .map(|tabs| tabs.process_at_level("tabs", state, 4))
             .unwrap_or_default();
         if let Some(tab_region) = tab_region
             && !tab.is_empty()
@@ -861,8 +861,8 @@ fn responsive_formats(
         }
         formats.push(parts_from_config(Some(&current), config));
     }
-    // Tabs reserve levels 3, 4, and 5 for name/locator fallbacks.
-    while formats.len() < 6 {
+    // Tabs reserve levels 3 and 4 for locator fallbacks.
+    while formats.len() < 5 {
         formats.push(parts_from_config(Some(&current), config));
     }
     formats
@@ -1144,7 +1144,7 @@ mod test {
         };
 
         let output = module.select_bar_output(&state, &widgets);
-        assert_eq!(output.levels, [3, 3, 3]);
+        assert_eq!(output.levels, [2, 2, 2]);
         assert!(output.left.starts_with("<- "));
         assert!(output.left.ends_with(" ->"));
     }
