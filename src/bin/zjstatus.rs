@@ -33,8 +33,12 @@ const REFRESH_INTERVAL_SECONDS: f64 = 1.0;
 const HINT_DELAY: Duration = Duration::from_millis(500);
 const HINT_DISMISS_DELAY: Duration = Duration::from_millis(20);
 
-fn is_refresh_timer(seconds: f64) -> bool {
-    seconds == REFRESH_INTERVAL_SECONDS
+fn rearm_refresh_timer(seconds: f64, schedule: impl FnOnce(f64)) -> bool {
+    if seconds != REFRESH_INTERVAL_SECONDS {
+        return false;
+    }
+    schedule(REFRESH_INTERVAL_SECONDS);
+    true
 }
 
 #[derive(Clone)]
@@ -79,7 +83,6 @@ struct State {
     hint_dismissed: bool,
     hint_reveal_at: Option<Instant>,
     hint_dismiss_at: Option<Instant>,
-    next_refresh_at: Option<Instant>,
     hint_ignore_input_until: Option<Instant>,
     hint_page: usize,
     hint_page_count: usize,
@@ -177,7 +180,6 @@ impl ZellijPlugin for State {
         self.hint_dismissed = false;
         self.hint_reveal_at = None;
         self.hint_dismiss_at = None;
-        self.next_refresh_at = None;
         self.hint_ignore_input_until = None;
         self.hint_page = 0;
         self.hint_page_count = 1;
@@ -198,9 +200,7 @@ impl ZellijPlugin for State {
             focused_pane_id: None,
             focused_pane_cwd: None,
         };
-        if self.refresh_due(Instant::now()) {
-            set_timeout(REFRESH_INTERVAL_SECONDS);
-        }
+        set_timeout(REFRESH_INTERVAL_SECONDS);
     }
 
     fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
@@ -315,17 +315,6 @@ impl State {
             self.hint_reveal_at = Some(now + HINT_DELAY);
             set_timeout(HINT_DELAY.as_secs_f64());
         }
-    }
-
-    fn refresh_due(&mut self, now: Instant) -> bool {
-        if self
-            .next_refresh_at
-            .is_some_and(|refresh_at| now < refresh_at)
-        {
-            return false;
-        }
-        self.next_refresh_at = Some(now + Duration::from_secs_f64(REFRESH_INTERVAL_SECONDS));
-        true
     }
 
     fn update_hint_timers(&mut self) -> bool {
@@ -675,9 +664,8 @@ impl State {
             }
             Event::Timer(seconds) => {
                 tracing::Span::current().record("event_type", "Event::Timer");
-                let refresh = is_refresh_timer(seconds) && self.refresh_due(Instant::now());
+                let refresh = rearm_refresh_timer(seconds, set_timeout);
                 if refresh {
-                    set_timeout(REFRESH_INTERVAL_SECONDS);
                     self.state.cache_mask = 0;
                 }
                 should_render = refresh || self.update_hint_timers();
@@ -1148,24 +1136,19 @@ mod test {
     use super::*;
 
     #[test]
-    fn stale_hint_timers_do_not_rearm_periodic_refresh() {
-        let start = Instant::now();
-        let mut state = State::default();
-
-        assert!(state.refresh_due(start));
-        assert!(!state.refresh_due(start + HINT_DELAY));
-
-        let delayed_refresh =
-            start + Duration::from_secs_f64(REFRESH_INTERVAL_SECONDS) + HINT_DELAY;
-        assert!(state.refresh_due(delayed_refresh));
-        assert!(!state.refresh_due(delayed_refresh + HINT_DISMISS_DELAY));
-    }
-
-    #[test]
-    fn hint_timeouts_do_not_start_refresh_loops() {
-        assert!(is_refresh_timer(REFRESH_INTERVAL_SECONDS));
-        assert!(!is_refresh_timer(HINT_DELAY.as_secs_f64()));
-        assert!(!is_refresh_timer(HINT_DISMISS_DELAY.as_secs_f64()));
+    fn only_periodic_timer_rearms_periodic_refresh() {
+        let mut scheduled = Vec::new();
+        assert!(rearm_refresh_timer(REFRESH_INTERVAL_SECONDS, |seconds| {
+            scheduled.push(seconds)
+        }));
+        assert!(!rearm_refresh_timer(HINT_DELAY.as_secs_f64(), |seconds| {
+            scheduled.push(seconds)
+        }));
+        assert!(!rearm_refresh_timer(
+            HINT_DISMISS_DELAY.as_secs_f64(),
+            |seconds| scheduled.push(seconds)
+        ));
+        assert_eq!(scheduled, [REFRESH_INTERVAL_SECONDS]);
     }
 
     #[test]
