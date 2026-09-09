@@ -1168,6 +1168,36 @@ mod test {
     }
 
     #[test]
+    fn hint_timer_overshoot_never_rearms_refresh() {
+        for delay in [HINT_DISMISS_DELAY.as_secs_f64(), HINT_DELAY.as_secs_f64()] {
+            for overshoot in [0.0, 1e-3, 1e-2, 1e-1] {
+                assert!(
+                    !rearm_refresh_timer(delay + overshoot, |seconds| {
+                        panic!("hint timer must not rearm: {seconds}")
+                    }),
+                    "delay {delay} with overshoot {overshoot} misclassified as refresh"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_elapsed_refresh_tick_rearms() {
+        // A delayed tick under load still counts, so the loop cannot starve.
+        for elapsed in [REFRESH_INTERVAL_SECONDS, 1.003, 1.5, 10.0] {
+            let mut rearmed = 0;
+            assert!(
+                rearm_refresh_timer(elapsed, |seconds| {
+                    assert_eq!(seconds, REFRESH_INTERVAL_SECONDS);
+                    rearmed += 1;
+                }),
+                "refresh tick of {elapsed}s dropped"
+            );
+            assert_eq!(rearmed, 1);
+        }
+    }
+
+    #[test]
     fn set_focused_pane_cwd_only_invalidates_on_change() {
         let mut state = State {
             focus_cwd_commands: vec!["command_branch".to_owned()],
