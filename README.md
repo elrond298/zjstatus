@@ -13,7 +13,17 @@
 - **zjstatus** — a visible status bar with widgets, formatted output, contextual key hints, responsive rows, and asynchronous command integrations.
 - **zjframes** — a background-only plugin that hides or shows pane frames based on Zellij state.
 
-This fork adds three independently responsive systems: contextual key-hint compression, main status-bar compression, and a responsive idle command row. Slow status commands retain their last completed value instead of blocking Zellij or the active Pi session.
+## Differences from upstream
+
+This fork tracks [dj95/zjstatus](https://github.com/dj95/zjstatus) and adds:
+
+- **Three independent responsive systems**, each compressing or paginating content as the terminal narrows instead of hiding it outright: [contextual key hints](docs/guides/key-hints.md), [main status-bar compression](docs/guides/status-bar-compression.md), and a [responsive idle command row](docs/guides/responsive-command-row.md). Slow status commands run asynchronously and retain their last completed value rather than blocking Zellij.
+- **[Bundled status scripts](docs/guides/status-scripts.md)**, installed under `scripts/` by `install.sh`:
+  - `vcs-status.sh` — Jujutsu (graph-nearest bookmark, `@`/`@-` working-copy descriptions) or Git branch, revision, and change counts for the focused pane.
+  - `pi-status.sh` — live status of running [Pi](https://github.com/elrond298/zellij-pi-dashboard) agent sessions: instance name, plan mode, todo progress, active goal, and subagent counts, read from JSON exported by the `zellij-status.ts` extension. Pi presence does not suppress VCS information.
+  - `host-load.sh` — Linux host metrics: one-minute load average, network throughput, and disk throughput.
+- **[`install.sh`](docs/getting-started/installation.md)** — builds both plugins and installs the WASM files plus the scripts into the Zellij config directory.
+- **In-repo [documentation](docs/)** — source-backed guides and references instead of the GitHub wiki.
 
 ## Documentation
 
