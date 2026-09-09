@@ -34,7 +34,10 @@ const HINT_DELAY: Duration = Duration::from_millis(500);
 const HINT_DISMISS_DELAY: Duration = Duration::from_millis(20);
 
 fn rearm_refresh_timer(seconds: f64, schedule: impl FnOnce(f64)) -> bool {
-    if seconds != REFRESH_INTERVAL_SECONDS {
+    // Zellij reports the elapsed time, which is always slightly above the
+    // requested interval, so compare against a window that no hint delay can
+    // reach instead of exact equality.
+    if seconds < (HINT_DELAY.as_secs_f64() + REFRESH_INTERVAL_SECONDS) / 2.0 {
         return false;
     }
     schedule(REFRESH_INTERVAL_SECONDS);
@@ -1148,7 +1151,20 @@ mod test {
             HINT_DISMISS_DELAY.as_secs_f64(),
             |seconds| scheduled.push(seconds)
         ));
-        assert_eq!(scheduled, [REFRESH_INTERVAL_SECONDS]);
+        // Zellij delivers the elapsed time, which is slightly above the
+        // requested interval.
+        assert!(rearm_refresh_timer(
+            REFRESH_INTERVAL_SECONDS + 3e-3,
+            |seconds| { scheduled.push(seconds) }
+        ));
+        assert!(!rearm_refresh_timer(
+            HINT_DELAY.as_secs_f64() + 2e-3,
+            |seconds| scheduled.push(seconds)
+        ));
+        assert_eq!(
+            scheduled,
+            [REFRESH_INTERVAL_SECONDS, REFRESH_INTERVAL_SECONDS]
+        );
     }
 
     #[test]
