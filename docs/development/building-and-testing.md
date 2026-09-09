@@ -53,6 +53,37 @@ zellij -s zjstatus-dev --config ./tests/zjstatus/config.kdl -n ./tests/zjstatus/
 zellij -s zjframes-dev --config ./tests/zjframes/config.kdl -n ./tests/zjframes/layout.kdl
 ```
 
+## Reloading in a live session
+
+`zellij action start-or-reload-plugin` re-instantiates an existing plugin in place, but Zellij matches a running instance by resolved location **and exact configuration equality**. A reload that omits the configuration, or differs from the layout's plugin block by a single key or value, does not match: Zellij treats the plugin as absent and *starts a new one* — a full tiled pane in the active tab. An instance without configuration renders this repository's own `No configuration found` error and the original status bar loses its asynchronous command output until it is reloaded or the session restarts.
+
+To reload a configured `zjstatus` in place, pass the layout's configuration verbatim as `key=value` pairs:
+
+```sh
+zellij action start-or-reload-plugin "file:$HOME/.config/zellij/plugins/zjstatus.wasm" \
+  -c "$(cat zjstatus-config.txt)"
+```
+
+Generate `zjstatus-config.txt` from the layout's plugin block instead of writing it by hand:
+
+```sh
+python3 - <<'EOF' > zjstatus-config.txt
+import re
+src = open("layout.kdl").read()
+block = re.search(r'plugin location="file:[^"]*"[^{]*\{(.*?)\n {8}\}', src, re.S).group(1)
+print(",".join(f"{k}={v}" for k, v in re.findall(r'^ {12}([a-z0-9_]+) +"((?:[^"\\]|\\.)*)"', block, re.M)))
+EOF
+```
+
+If a reload already spawned a duplicate pane, remove it with the namespaced pane id (a bare number is read as a terminal id and silently does nothing):
+
+```sh
+zellij action dump-layout | grep 'plugin location'   # identify the spawned pane
+zellij action close-pane --pane-id plugin_2
+```
+
+For quick iteration, restarting the fixture session (`zellij -s zjstatus-dev ...`) is simpler than maintaining an exact configuration copy: the reload path exists for sessions that cannot be restarted.
+
 The test layouts under `tests/` exercise rendering and responsive behavior. Keep fixture layouts in sync with configuration-key changes.
 
 ## Benchmarks

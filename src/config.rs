@@ -641,7 +641,7 @@ impl ModuleConfig {
     ) -> String {
         if self.left_parts.is_empty() && self.center_parts.is_empty() && self.right_parts.is_empty()
         {
-            return "No configuration found. See https://github.com/dj95/zjstatus/wiki/3-%E2%80%90-Configuration for more info".to_string();
+            return "No configuration found. See the configuration reference in the zjstatus repository (docs/reference/configuration.md)".to_owned();
         }
 
         let BarOutput {
