@@ -89,5 +89,5 @@ See [building and testing](docs/development/building-and-testing.md), [architect
 ## Community and license
 
 - [Community showcase](https://github.com/dj95/zjstatus/discussions/44)
-- [Issue tracker](https://github.com/dj95/zjstatus/issues)
+- [Issue tracker](https://github.com/elrond298/zjstatus/issues) — fork-specific issues; upstream bugs are tracked [upstream](https://github.com/dj95/zjstatus/issues)
 - [MIT License](LICENSE)
